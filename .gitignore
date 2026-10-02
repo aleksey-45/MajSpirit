@@ -1,0 +1,40 @@
+# ── 编译产物 ──
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# ── Go 工作区与依赖 ──
+go.work
+go.work.sum
+/vendor/
+
+# ── 测试与覆盖率 ──
+coverage.out
+coverage.html
+*.cover
+*.prof
+
+# ── 环境变量与密钥（绝不入库）──
+.env
+.env.local
+*.local.yml
+
+# ── 编辑器：保留项目级共享配置，忽略个人设置 ──
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# 个人编辑器 Profile（含本机扩展清单，不随项目分发）
+*.code-profile
+
+# ── 系统 ──
+.DS_Store
+Thumbs.db
+
+# ── 日志 ──
+*.log

@@ -1,0 +1,39 @@
+# MajSpirit 本地开发环境：服务端 + PostgreSQL
+#
+#   docker compose up --build
+#
+# 任务书 §1 提到「项目能在 Linux 系统上运行的话也许是个加分项」，
+# 这套编排同时也是验证 Linux 可运行性的手段。
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MAJSPIRIT_ADDR: ":8080"
+      MAJSPIRIT_DATABASE_URL: "postgres://majspirit:majspirit@db:5432/majspirit?sslmode=disable"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: majspirit
+      POSTGRES_PASSWORD: majspirit
+      POSTGRES_DB: majspirit
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U majspirit -d majspirit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

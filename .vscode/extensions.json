@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "golang.go",
+    "editorconfig.editorconfig",
+    "usernamehw.errorlens",
+    "mikestead.dotenv",
+    "humao.rest-client",
+    "ckolkman.vscode-postgres",
+    "ms-azuretools.vscode-containers",
+    "ms-vscode.makefile-tools"
+  ],
+  "unwantedRecommendations": []
+}
