@@ -94,11 +94,15 @@ CREATE TABLE game_rounds (
 );
 
 -- 每个小局的初始手牌（任务书 §6 要求可查「初始手牌」）
+--
+-- 注意这里存的是**发牌那一刻**的手牌：四家各 13 张。
+-- 庄家的第 14 张是它的第一次摸牌，会作为一条 'draw' 事件记在 game_events。
+-- 打第一张牌时庄家手上是 14 张，与任务书描述一致，只是记录的分界点不同。
 CREATE TABLE game_initial_hands (
     game_id      BIGINT   NOT NULL,
     round_index  SMALLINT NOT NULL,
     seat         SMALLINT NOT NULL,
-    tiles        TEXT     NOT NULL,         -- 紧凑记法，庄家 14 张、闲家 13 张
+    tiles        TEXT     NOT NULL,         -- 紧凑记法，四家各 13 张
 
     PRIMARY KEY (game_id, round_index, seat),
     FOREIGN KEY (game_id, round_index)
