@@ -106,12 +106,31 @@ CREATE TABLE game_initial_hands (
 );
 
 -- 每个小局的牌山（任务书 §6 要求可查「牌山」）
--- 存完整的摸牌顺序，便于复核整局是否被"操控"——
--- 这正好呼应任务书的缘起：小 X 怀疑雀魂操控牌山。
+--
+-- 这里存的不只是「服务器说的 136 张牌」，而是一份**可被玩家独立核验**的记录。
+-- 除了牌山本身，还要存下生成它的种子与开赛前的承诺值，任何人拿这些数据
+-- 就能自己重放一遍洗牌，确认牌山没有被操控。
+-- 协议细节见 docs/牌山可验证性.md。
 CREATE TABLE game_walls (
     game_id     BIGINT   NOT NULL,
     round_index SMALLINT NOT NULL,
-    tiles       TEXT     NOT NULL,          -- 136 张的完整洗牌结果
+
+    -- 按摸牌顺序逐张写成的紧凑记法（不是按花色分组），人工核对时可直接看懂。
+    -- 注意：验证时不要用这个字段重算哈希，它的长度和顺序都与洗牌输入不同。
+    tiles       TEXT     NOT NULL,
+
+    -- 牌山指纹：SHA-256(136 张牌的原始字节)。核验时先比它，比逐张比对快得多。
+    wall_hash   BYTEA    NOT NULL,
+
+    -- 可验证性所需的材料
+    server_seed   BYTEA,        -- 本场游戏的服务器种子，牌局结束后公布
+    commitment    BYTEA,        -- 开赛前公布并入库；事后用它证明种子没被替换
+    client_seeds  BYTEA[],      -- 四位玩家按座位顺序提交的种子，顺序不可乱
+
+    -- 洗牌实现依赖的运行时版本。万一 Go 改变了库函数行为，
+    -- 至少知道该用哪个版本去验证历史牌局。
+    go_version  TEXT,
+
     -- 宝牌指示牌（杠后可能追加，故用数组）。立直和牌时里宝牌也要记，
     -- 否则无法复核算分结果。
     dora_indicators  TEXT[] NOT NULL DEFAULT '{}',
@@ -121,6 +140,15 @@ CREATE TABLE game_walls (
     FOREIGN KEY (game_id, round_index)
         REFERENCES game_rounds (game_id, round_index) ON DELETE CASCADE
 );
+
+-- 承诺值必须在开赛前写入，不能等牌局结束一起写——事后补写的承诺等于没有承诺。
+-- 因此这个字段在牌局进行中就已非空，只有 server_seed 是结束后才填。
+COMMENT ON COLUMN game_walls.commitment IS
+    '开赛前公布的承诺值 SHA256(域分隔 || gameID || serverSeed)，必须先于牌局入库';
+COMMENT ON COLUMN game_walls.server_seed IS
+    '牌局结束后公布；与 commitment 比对即可确认种子未被事后替换';
+COMMENT ON COLUMN game_walls.tiles IS
+    '按摸牌顺序的紧凑记法，供人工核对；重算哈希请用 136 张牌的原始字节';
 
 -- ── 和牌结算 ──────────────────────────────────────────────────────
 
