@@ -12,7 +12,6 @@ type Wall struct {
 }
 
 // NewWallFromSeed 用确定性种子构造牌山。
-//
 // 同一个种子必须永远产出同一副牌山——这是牌局可验证性的前提。
 // 种子要用满全部 32 字节：只取其中一部分会让候选空间小到能被穷举，
 // 玩家拿到承诺值就能在开赛前算出整副牌。
@@ -32,7 +31,6 @@ func NewWall(r *rand.Rand) *Wall {
 }
 
 // Shuffle 用 r 的确定性字节流就地重排 tiles。
-//
 // 算法固定为降序的 Fisher-Yates，刻意不用标准库的 shuffle——它从字节流映射到
 // 下标的方式属于实现细节，Go 不保证跨版本不变，而验证要求多年后仍能重放。
 // 取模带来的轻微分布偏差对不发奖的牌局可以接受。
@@ -50,8 +48,7 @@ func (w *Wall) Remaining() int { return len(w.tiles) }
 func (w *Wall) Empty() bool { return w.Remaining() == 0 }
 
 // Draw 摸一张牌，牌山已空时 ok 为 false。
-//
-// 摸空是正常业务分支（该小局流局结束），不是异常，所以不 panic。
+// 摸空是正常业务分支（该小局流局结束），不是异常。
 func (w *Wall) Draw() (Tile, bool) {
 	if w.Empty() {
 		return 0, false
@@ -69,7 +66,6 @@ func (w *Wall) Tiles() []Tile {
 }
 
 // Bytes 返回 136 字节的原始摸牌顺序，供哈希使用。
-//
 // 不要用 FormatTiles 代替：那个按花色分组排序，会丢掉顺序，
 // 导致所有同花色组合的牌山共用同一个指纹。
 func (w *Wall) Bytes() []byte {
