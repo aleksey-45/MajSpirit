@@ -11,8 +11,6 @@
 -- 例如 "123m456s789p11z"。这样数据库里的内容用肉眼就能核对，
 -- 与代码、测试用例、日志共用同一套表示，排查问题时不需要额外的解码工具。
 
-BEGIN;
-
 -- ── 用户（任务书 §2）──────────────────────────────────────────────
 
 CREATE TABLE users (
@@ -223,4 +221,3 @@ CREATE INDEX game_events_replay_idx ON game_events (game_id, round_index, seq);
 -- 按玩家查他打过的动作（数据统计用）
 CREATE INDEX game_events_seat_idx ON game_events (game_id, round_index, seat);
 
-COMMIT;
