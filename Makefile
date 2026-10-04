@@ -10,8 +10,10 @@ help: ## 显示可用命令
 build: ## 编译服务端到 bin/
 	go build -trimpath -o $(BINARY) ./cmd/server
 
-run: ## 本地启动服务端（默认 :8080）
-	go run ./cmd/server
+run: ## 本地启动服务端（读 .env）
+	@test -f .env || { echo "没有 .env —— 先照 .env.example 建一个"; exit 1; }
+	set -a; . ./.env; set +a; go run ./cmd/server
+
 
 test: ## 运行全部测试（需要数据库的用例会自动跳过）
 	go test $(PKGS)
