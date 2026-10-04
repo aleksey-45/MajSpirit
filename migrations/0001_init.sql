@@ -2,10 +2,10 @@
 --
 -- 对应任务书 §2（用户系统）与 §6（历史牌局）。
 --
--- 本项目采用**完整的立直麻将规则**，因此除任务书明确要求的内容外，
+-- 本项目采用 M.LEAGUE（Mリーグ）公式戦ルール，因此除任务书明确要求的内容外，
 -- 还需要记录鸣牌、立直、宝牌指示牌、役种、翻数与符数，
 -- 否则历史牌局无法复核「这一手到底该算几分」。
--- 算分规则见 docs/立直麻将算分规则.md。
+-- 规则与算分见 docs/规则集.md。
 --
 -- 关于牌的存储：牌组统一用 internal/mahjong 的紧凑记法存成 TEXT，
 -- 例如 "123m456s789p11z"。这样数据库里的内容用肉眼就能核对，
@@ -49,9 +49,14 @@ CREATE TABLE game_seats (
     game_id     BIGINT NOT NULL REFERENCES games (id) ON DELETE CASCADE,
     seat        SMALLINT NOT NULL,          -- 0-3
     user_id     BIGINT NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
-    initial_score INTEGER NOT NULL,         -- 起手点数，标准规则为 25000
+    initial_score INTEGER NOT NULL,         -- 持ち点，M-League 为 25000
     final_score INTEGER NOT NULL DEFAULT 0,
-    placement   SMALLINT,                   -- 顺位 1-4，游戏结束后写入
+    placement   SMALLINT,                   -- 顺位 1-4，半荘结束后写入
+    -- M-League ポイント（B 层大会规定，见 docs/规则集.md §10.4）
+    --   points = (final_score - 30000) + 顺位点 * 1000
+    -- 单位是「点」而不是「pt」：61200 表示 +61.2 pt（1000 点 = 1 pt）。
+    -- 存整数是为了避开浮点误差，展示时除以 1000。
+    points      INTEGER NOT NULL DEFAULT 0,
 
     PRIMARY KEY (game_id, seat),
     CONSTRAINT game_seats_seat_range    CHECK (seat BETWEEN 0 AND 3),
@@ -72,9 +77,11 @@ CREATE TABLE game_rounds (
     round_wind    TEXT     NOT NULL,        -- 场风，紧凑记法单张，如 "1z"（东）
     hand_number   SMALLINT NOT NULL,        -- 第几本场（本场棒数量）
     dealer_seat   SMALLINT NOT NULL,        -- 本小局庄家
-    -- 结束方式：'win' 和牌 / 'draw' 荒牌流局 / 'abortive' 途中流局
+    -- 结束方式：'win' 和牌 / 'draw' 荒牌流局
+    -- 刻意没有 'abortive'：M-League 不采用任何途中流局
+    -- （九种九牌 / 四风连打 / 四家立直 / 四杠散了 / 三家和了 全都不成立），
+    -- 一局只能以和牌或荒牌流局结束。见 docs/规则集.md §11.2。
     ended_by      TEXT     NOT NULL,
-    abortive_reason TEXT,                   -- 途中流局原因，见下方 CHECK
     winner_seat   SMALLINT,                 -- 和牌者；流局时为 NULL
     is_tsumo      BOOLEAN,                  -- true=自摸 false=荣和；流局时为 NULL
     winning_tile  TEXT,                     -- 和牌的那张牌，如 "5p"
@@ -83,14 +90,7 @@ CREATE TABLE game_rounds (
 
     PRIMARY KEY (game_id, round_index),
     CONSTRAINT game_rounds_ended_by
-        CHECK (ended_by IN ('win', 'draw', 'abortive')),
-    CONSTRAINT game_rounds_abortive_reason
-        CHECK (abortive_reason IS NULL OR abortive_reason IN
-               ('kyuushu_kyuuhai',   -- 九种九牌
-                'suufon_renda',      -- 四风连打
-                'suucha_riichi',     -- 四家立直
-                'suukantsu',         -- 四杠散了
-                'sancha_hou'))       -- 三家和了
+        CHECK (ended_by IN ('win', 'draw'))
 );
 
 -- 每个小局的初始手牌（任务书 §6 要求可查「初始手牌」）

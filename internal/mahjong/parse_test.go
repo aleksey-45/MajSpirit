@@ -68,8 +68,7 @@ func TestParseTilesRejectsInvalid(t *testing.T) {
 		name  string
 		input string
 	}{
-		{"点数 0", "10m"},     // 0 不是合法点数
-		{"点数 0 单独出现", "0m"}, // 同上
+		{"赤五不能是字牌", "0z"}, // 字牌没有赤牌
 		{"结尾有数字无花色", "123m4"},
 		{"花色前没有数字", "m"},
 		{"非法字符", "123x"},

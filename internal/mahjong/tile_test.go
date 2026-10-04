@@ -25,6 +25,9 @@ func TestTileSuitRankString(t *testing.T) {
 		{31, SuitHonor, HonorWhite, "白板"},
 		{32, SuitHonor, HonorGreen, "发财"},
 		{33, SuitHonor, HonorRed, "红中"},
+		{AkaMan5, SuitMan, 5, "赤五万"},
+		{AkaSou5, SuitSou, 5, "赤五索"},
+		{AkaPin5, SuitPin, 5, "赤五筒"},
 	}
 
 	for _, tt := range tests {
@@ -61,11 +64,8 @@ func TestNewTileRejectsInvalid(t *testing.T) {
 		suit Suit
 		rank int
 	}{
-		{"数牌点数 0", SuitMan, 0},
 		{"数牌点数 10", SuitMan, 10},
-		{"条点数 0", SuitSou, 0},
 		{"条点数 -1", SuitSou, -1},
-		{"饼点数 0", SuitPin, 0},
 		{"字牌点数 0", SuitHonor, 0},
 		{"字牌点数 8", SuitHonor, 8},
 		{"字牌点数 9", SuitHonor, 9},
@@ -87,16 +87,77 @@ func TestNewTileRejectsInvalid(t *testing.T) {
 	}
 }
 
+// 合法写码是 0..36（34 种 + 3 种赤宝牌）。
 func TestValid(t *testing.T) {
-	for kind := Tile(0); kind < NumTileKinds; kind++ {
-		if !kind.Valid() {
-			t.Errorf("Tile(%d).Valid() 应为 true", kind)
+	for code := Tile(0); code < NumTileCodes; code++ {
+		if !code.Valid() {
+			t.Errorf("Tile(%d).Valid() 应为 true", code)
 		}
 	}
-	for _, v := range []Tile{34, 35, 100, 255} {
+	for _, v := range []Tile{NumTileCodes, 40, 100, 255} {
 		if v.Valid() {
 			t.Errorf("Tile(%d).Valid() 应为 false", v)
 		}
+	}
+}
+
+// 赤宝牌必须归一到对应的普通五，而且 Kind 对非赤牌是恒等。
+func TestKind(t *testing.T) {
+	for code, want := range map[Tile]Tile{
+		AkaMan5: 4,  // 五万
+		AkaSou5: 13, // 五索
+		AkaPin5: 22, // 五筒
+	} {
+		if got := code.Kind(); got != want {
+			t.Errorf("Tile(%d).Kind() = %d，期望 %d", code, got, want)
+		}
+		if !code.IsAka() {
+			t.Errorf("Tile(%d).IsAka() 应为 true", code)
+		}
+		// 归一之后必须落到合法的普通牌上，且不再是赤牌
+		k := code.Kind()
+		if !k.Valid() || k.IsAka() {
+			t.Errorf("Tile(%d).Kind() 归一到 Tile(%d)，不是普通牌", code, k)
+		}
+		if k.Rank() != 5 {
+			t.Errorf("Tile(%d).Kind().Rank() = %d，期望 5", code, k.Rank())
+		}
+	}
+
+	for code := Tile(0); code < NumTileKinds; code++ {
+		if code.Kind() != code {
+			t.Errorf("Tile(%d).Kind() 对非赤牌应恒等，得到 %d", code, code.Kind())
+		}
+		if code.IsAka() {
+			t.Errorf("Tile(%d).IsAka() 应为 false", code)
+		}
+	}
+	for _, v := range []Tile{NumTileCodes, 200, 255} {
+		if v.IsAka() {
+			t.Errorf("Tile(%d) 越界，IsAka() 应为 false", v)
+		}
+	}
+}
+
+// rank 0 表示该花色的赤五；字牌没有赤牌。
+func TestNewTileAka(t *testing.T) {
+	for suit, want := range map[Suit]Tile{
+		SuitMan: AkaMan5, SuitSou: AkaSou5, SuitPin: AkaPin5,
+	} {
+		got, err := NewTile(suit, 0)
+		if err != nil {
+			t.Fatalf("NewTile(%d, 0) 出错: %v", suit, err)
+		}
+		if got != want {
+			t.Errorf("NewTile(%d, 0) = Tile(%d)，期望 Tile(%d)", suit, got, want)
+		}
+		if got.Suit() != suit {
+			t.Errorf("NewTile(%d, 0).Suit() = %d", suit, got.Suit())
+		}
+	}
+
+	if _, err := NewTile(SuitHonor, 0); err == nil {
+		t.Error("NewTile(SuitHonor, 0) 应报错：字牌没有赤牌")
 	}
 }
 
@@ -107,15 +168,35 @@ func TestFullSet(t *testing.T) {
 	}
 
 	var counts [NumTileKinds]int
+	aka := 0
 	for _, tile := range tiles {
 		if !tile.Valid() {
 			t.Fatalf("FullSet() 里出现非法牌 Tile(%d)", tile)
 		}
-		counts[tile]++
+		counts[tile.Kind()]++ // 赤五万与五万同一种
+		if tile.IsAka() {
+			aka++
+		}
 	}
 	for kind, n := range counts {
 		if n != numCopies {
 			t.Errorf("Tile(%d) 有 %d 张，期望 %d 张", kind, n, numCopies)
+		}
+	}
+
+	// 赤宝牌是**替换**而不是额外加入：总数仍是 136，每种花色的五仍是 4 张。
+	if aka != 3 {
+		t.Errorf("FullSet() 里有 %d 张赤宝牌，期望 3 张", aka)
+	}
+	for _, want := range []Tile{AkaMan5, AkaSou5, AkaPin5} {
+		n := 0
+		for _, tile := range tiles {
+			if tile == want {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s 在 FullSet() 里有 %d 张，期望 1 张", want, n)
 		}
 	}
 }
@@ -132,23 +213,33 @@ func TestIsNumberIsHonor(t *testing.T) {
 		}
 	}
 
+	// 赤宝牌是数牌——**漏掉 Kind 归一的话它会掉进字牌分支**
+	for _, aka := range []Tile{AkaMan5, AkaSou5, AkaPin5} {
+		if !aka.IsNumber() {
+			t.Errorf("%s.IsNumber() 应为 true", aka)
+		}
+		if aka.IsHonor() {
+			t.Errorf("%s.IsHonor() 应为 false", aka)
+		}
+	}
+
 	// 非法牌不属于任何一类
-	for _, v := range []Tile{34, 255} {
+	for _, v := range []Tile{NumTileCodes, 255} {
 		if v.IsNumber() || v.IsHonor() {
 			t.Errorf("Tile(%d) 非法，IsNumber/IsHonor 都应为 false", v)
 		}
 	}
 }
 
-// 34 种牌的显示名必须互不相同，防止名字表里出现复制粘贴错误。
+// 全部 37 个写码的显示名必须互不相同，防止名字表里出现复制粘贴错误。
 func TestTileNamesAreUnique(t *testing.T) {
-	seen := make(map[string]Tile, NumTileKinds)
-	for kind := Tile(0); kind < NumTileKinds; kind++ {
-		name := kind.String()
+	seen := make(map[string]Tile, NumTileCodes)
+	for code := Tile(0); code < NumTileCodes; code++ {
+		name := code.String()
 		if prev, dup := seen[name]; dup {
-			t.Errorf("Tile(%d) 与 Tile(%d) 的显示名都是 %q", kind, prev, name)
+			t.Errorf("Tile(%d) 与 Tile(%d) 的显示名都是 %q", code, prev, name)
 		}
-		seen[name] = kind
+		seen[name] = code
 	}
 }
 

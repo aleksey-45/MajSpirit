@@ -1,6 +1,7 @@
 package mahjong
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 // ParseTiles 解析紧凑记法表示的牌组，例如 "123m456s789p11z"。
 //
 // m/s/p/z 分别表示万/条/饼/字牌，字母前的数字是点数，空白字符会被忽略。
+// 数字 `0` 表示该花色的赤五，即 `0m` / `0s` / `0p`（字牌没有赤牌）。
 // 同一个花色字母可以重复出现，解析结果保持书写顺序（不排序）。
 //
 // 本函数只负责语法，不校验张数上限："11111m" 会成功返回 5 张一万，
@@ -66,6 +68,7 @@ func MustParseTiles(s string) []Tile {
 
 // FormatTiles 把牌组格式化为紧凑记法，与 ParseTiles 互为逆运算。
 // 输出按万、条、饼、字牌分组，组内按点数升序，例如 "123m456s789p11z"。
+// 赤宝牌写作 `0`，且排在同点数的普通牌**之前**，例如 "055m"。
 // 非法牌会被跳过：本函数同时用于日志与调试输出，不该因为一张坏牌就 panic。
 func FormatTiles(tiles []Tile) string {
 	var b strings.Builder
@@ -80,9 +83,20 @@ func FormatTiles(tiles []Tile) string {
 		if len(group) == 0 {
 			continue
 		}
-		slices.Sort(group)
+		// 按**种类**排序：赤五万要排在五万的位置上，而不是因为编号 34 掉到队尾。
+		// 同种类时赤牌在前（编号更大），和 "055m" 的写法一致。
+		slices.SortFunc(group, func(a, b Tile) int {
+			if c := cmp.Compare(a.Kind(), b.Kind()); c != 0 {
+				return c
+			}
+			return cmp.Compare(b, a)
+		})
 		for _, t := range group {
-			b.WriteByte(byte('0' + t.Rank()))
+			if t.IsAka() {
+				b.WriteByte('0')
+			} else {
+				b.WriteByte(byte('0' + t.Rank()))
+			}
 		}
 		b.WriteByte(suitChar(suit))
 	}

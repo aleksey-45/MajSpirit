@@ -68,6 +68,9 @@ func (w *Wall) Tiles() []Tile {
 // Bytes 返回 136 字节的原始摸牌顺序，供哈希使用。
 // 不要用 FormatTiles 代替：那个按花色分组排序，会丢掉顺序，
 // 导致所有同花色组合的牌山共用同一个指纹。
+//
+// 赤宝牌的写码（34/35/36）与普通牌不同，所以**赤五落在哪一张上也被算进指纹**。
+// 这一条不能丢：否则服务器可以在公布承诺值之后才决定赤五发给谁。
 func (w *Wall) Bytes() []byte {
 	out := make([]byte, len(w.tiles))
 	for i, t := range w.tiles {
@@ -78,12 +81,16 @@ func (w *Wall) Bytes() []byte {
 
 // Sequence 返回按摸牌顺序逐张写成的紧凑记法，供人工核对与入库。
 //
-// 例如 "1m5p3s2z"，共 136 组。输出可被 ParseTiles 原样读回。
+// 例如 "1m5p3s2z"，共 136 组。赤宝牌写作 `0`。输出可被 ParseTiles 原样读回。
 func (w *Wall) Sequence() string {
 	var b strings.Builder
 	b.Grow(len(w.tiles) * 2)
 	for _, t := range w.tiles {
-		b.WriteByte(byte('0' + t.Rank()))
+		if t.IsAka() {
+			b.WriteByte('0')
+		} else {
+			b.WriteByte(byte('0' + t.Rank()))
+		}
 		b.WriteByte(suitChar(t.Suit()))
 	}
 	return b.String()
