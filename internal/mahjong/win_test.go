@@ -32,7 +32,7 @@ func sorted(tiles []Tile) []Tile {
 
 // ── 正反例表 ────────────────────────────────────────────────────────────
 //
-// 期望值来自 docs/实现指南.md §1.5 的验收表，以及 docs/规则集.md §3.5（和牌形只有三种）。
+// 期望值来自 docs/local/实现指南.md §1.5 的验收表，以及 docs/规则集.md §3.5（和牌形只有三种）。
 
 func TestCanWin(t *testing.T) {
 	tests := []struct {

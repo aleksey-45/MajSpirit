@@ -2,7 +2,7 @@ package mahjong
 
 import "testing"
 
-// fu_test.go —— 符数计算。规则见 docs/规则集.md §5，验收清单见 docs/实现指南.md §1.7。
+// fu_test.go —— 符数计算。规则见 docs/规则集.md §5，验收清单见 docs/local/实现指南.md §1.7。
 //
 // 期望值来源：
 //   - §5 的加符表（副底 20、面子符、雀头符、待ち符、门清荣和、自摸）

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// migrate_test.go —— 迁移执行器。设计见 docs/实现指南.md §2.1。
+// migrate_test.go —— 迁移执行器。设计见 docs/local/实现指南.md §2.1。
 //
 // 这些用例会 **DROP SCHEMA**，所以连的是 MAJSPIRIT_TEST_DATABASE_URL，
 // 而且 testPool 会拒绝在库名不以 _test 结尾的库上跑。

@@ -1,6 +1,6 @@
 package mahjong
 
-// acceptance_test.go —— docs/算法验证指南.md §11「阶段验收清单」的横切验证。
+// acceptance_test.go —— docs/local/算法验证指南.md §11「阶段验收清单」的横切验证。
 //
 // 为什么不重复各 *_test.go：牌与记法、牌山、手牌、役种、符数、点数那六组已经
 // 逐条覆盖了（见各自的文件）。这里只补 §1.9 点名的那三项横切手段——
