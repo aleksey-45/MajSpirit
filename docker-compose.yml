@@ -12,7 +12,7 @@ services:
       - "8080:8080"
     environment:
       MAJSPIRIT_ADDR: ":8080"
-      MAJSPIRIT_DATABASE_URL: "postgres://majspirit:majspirit@db:5432/majspirit?sslmode=disable"
+      MAJSPIRIT_DATABASE_URL: "postgres://majspirit:dondeestaaleksey@db:5432/majspirit?sslmode=disable"
     depends_on:
       db:
         condition: service_healthy
@@ -22,7 +22,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: majspirit
-      POSTGRES_PASSWORD: majspirit
+      POSTGRES_PASSWORD: dondeestaaleksey
       POSTGRES_DB: majspirit
     ports:
       # 宿主机 15432 → 容器 5432。

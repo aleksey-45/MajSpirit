@@ -1,0 +1,27 @@
+# ── 行尾：本项目的产物跑在 Linux 上 ──────────────────────────────
+#
+# 让 LF 成为**仓库属性**，而不是各机器 git 配置 + 编辑器设置的结果。
+# 没有这一条时，core.autocrlf 在别的机器上可能是 true，checkout 出来就是 CRLF；
+# 而 Dockerfile 的 `RUN ... \` 续行遇到 \r 会把回车当成命令的一部分，
+# 报错信息通常还指不到行尾。
+* text=auto eol=lf
+
+# ── 二进制：不做任何行尾转换 ────────────────────────────────────
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.exe   binary
+*.zip   binary
+
+# ── 显式钉死几个行尾敏感的文件 ──────────────────────────────────
+# 上面那条 `*` 将来若被改动，这几类不该跟着变。
+Dockerfile  text eol=lf
+Makefile    text eol=lf
+*.sh        text eol=lf
+*.sql       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
