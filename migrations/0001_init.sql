@@ -26,8 +26,13 @@ CREATE TABLE users (
     CONSTRAINT users_username_not_blank CHECK (btrim(username) <> '')
 );
 
--- 用户名唯一，且登录查询走的正是这个索引
-CREATE UNIQUE INDEX users_username_key ON users (lower(username));
+-- 用户名唯一，**大小写敏感**：`Alice` 与 `alice` 是两个不同的账号。
+--
+-- 索引直接建在 username 上，所以登录查询必须写 `WHERE username = $1`，
+-- **不要加 lower()**——那是个不同的表达式，用不上这个索引。
+--
+-- 代价：`ORDER BY username` 变成字节序，大写排在小写前面（`Zoe` < `alice`）。
+CREATE UNIQUE INDEX users_username_key ON users (username);
 
 -- ── 牌局（任务书 §6）──────────────────────────────────────────────
 
