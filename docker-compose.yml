@@ -25,7 +25,14 @@ services:
       POSTGRES_PASSWORD: majspirit
       POSTGRES_DB: majspirit
     ports:
-      - "5432:5432"
+      # 宿主机 15432 → 容器 5432。
+      #
+      # 不能映射到宿主机 5432：Windows 把 5390–5489 划给了 Hyper-V/WSL2 的网络栈
+      # （`netsh int ipv4 show excludedportrange protocol=tcp` 可查），在那儿 bind
+      # 会得到 Permission denied 而不是 Address already in use。
+      #
+      # 容器内部仍是标准的 5432，所以上面 app 连的 db:5432 不变。
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
