@@ -15,7 +15,7 @@ import (
 //	set -a; . ./.env; set +a; go test ./internal/store/ -v
 //
 // 没设就跳过——这样在没装数据库的机器上 `go test ./...` 仍然全绿。
-// 这是 §2 起与 §1 最大的不同：**纯度没了，测试要开始区分"需不需要外部世界"**。
+// 这是 §2 起与 §1 最大的不同：纯度没了，测试要开始区分"需不需要外部世界"。
 
 func integrationDSN(t *testing.T) string {
 	t.Helper()
@@ -41,7 +41,7 @@ func TestNewConnects(t *testing.T) {
 
 	// 再查一次，确认不只是 Ping 通了
 	var user, db string
-	if err := p.QueryRow(ctx, "SELECT current_user, current_database()").Scan(&user, &db); err != nil {
+	if err := p.pool.QueryRow(ctx, "SELECT current_user, current_database()").Scan(&user, &db); err != nil {
 		t.Fatalf("查询失败: %v", err)
 	}
 	if user == "" || db == "" {
@@ -65,7 +65,7 @@ func TestNewRoleCanCreateTables(t *testing.T) {
 	defer p.Close()
 
 	// 在一个回滚的事务里建表：验证权限，但不留下任何东西。
-	tx, err := p.Begin(ctx)
+	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("Begin 失败: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestNewRoleCanCreateTables(t *testing.T) {
 	t.Log("角色有建表权限（能跑迁移）")
 }
 
-// 连接串写错必须**报错**，而不是返回一个能用的池。
+// 连接串写错必须报错，而不是返回一个能用的池。
 func TestNewRejectsBadDSN(t *testing.T) {
 	ctx := context.Background()
 
@@ -99,11 +99,11 @@ func TestNewRejectsBadDSN(t *testing.T) {
 	}
 }
 
-// ⚠️ 记录一个**已知缺陷**：New 没有设连接超时。
+// 记录一个已知缺陷：New 没有设连接超时。
 //
 // 调用方传 context.Background() 时，遇到黑洞地址（防火墙丢包而不是拒绝连接），
 // Ping 会挂到 OS 的 TCP 超时（约 2 分钟）才返回，而不是快速失败。
-// 这条测试故意用短 ctx，所以现在能过——但**它掩盖了那个缺陷**，
+// 这条测试故意用短 ctx，所以现在能过——但它掩盖了那个缺陷，
 // 一旦去掉 ctx 超时就会挂两分钟。
 //
 // 修法：DSN 里加 `connect_timeout=5`，或在 New 内部派生一个带超时的 ctx。

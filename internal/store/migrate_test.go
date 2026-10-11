@@ -4,16 +4,19 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/aleksey-45/majspirit/migrations"
 )
 
 // migrate_test.go —— 迁移执行器。设计见 docs/local/实现指南.md §2.1。
 //
-// 这些用例会 **DROP SCHEMA**，所以连的是 MAJSPIRIT_TEST_DATABASE_URL，
+// 这些用例会 DROP SCHEMA，所以连的是 MAJSPIRIT_TEST_DATABASE_URL，
 // 而且 testPool 会拒绝在库名不以 _test 结尾的库上跑。
 
 // testPool 连到测试库。
@@ -47,7 +50,7 @@ func testPool(t *testing.T) *Pool {
 // clean 把 public schema 清回"什么都没建"的状态。
 func clean(t *testing.T, p *Pool) {
 	t.Helper()
-	if _, err := p.Exec(context.Background(),
+	if _, err := p.pool.Exec(context.Background(),
 		`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`); err != nil {
 		t.Fatalf("重置 schema: %v", err)
 	}
@@ -57,7 +60,7 @@ func clean(t *testing.T, p *Pool) {
 func tables(t *testing.T, p *Pool) map[string]bool {
 	t.Helper()
 
-	rows, err := p.Query(context.Background(),
+	rows, err := p.pool.Query(context.Background(),
 		`SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`)
 	if err != nil {
 		t.Fatalf("查表: %v", err)
@@ -82,7 +85,7 @@ func tables(t *testing.T, p *Pool) map[string]bool {
 func migratedVersions(t *testing.T, p *Pool) []string {
 	t.Helper()
 
-	rows, err := p.Query(context.Background(),
+	rows, err := p.pool.Query(context.Background(),
 		`SELECT version FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		t.Fatalf("查版本表: %v", err)
@@ -151,7 +154,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 }
 
-// ★ 核心：如果「写版本号」失败，前面那些**已经成功的 DDL** 也必须一起回滚。
+// 核心：如果「写版本号」失败，前面那些已经成功的 DDL 也必须一起回滚。
 //
 // 怎么造出"DDL 成功、版本号写入失败"：让迁移自己把 schema_migrations 删掉，
 // 随后那句 INSERT 就会找不到表而失败。
@@ -161,8 +164,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 //   - 事务包对了   → DROP 和 CREATE 一起回滚，两样都回到原状
 //   - DDL 先提交了 → must_disappear 留下、schema_migrations 没了 → 灾难
 //
-// ⚠️ 别用"SQL 语法错"来测原子性：那种错误在第一步就失败，版本号那句根本
-// 没执行到，所以**分两个事务的实现也能通过**。
+// 别用"SQL 语法错"来测原子性：那种错误在第一步就失败，版本号那句根本
+// 没执行到，所以分两个事务的实现也能通过。
 func TestMigrateIsAtomic(t *testing.T) {
 	p := testPool(t)
 	clean(t, p)
@@ -228,9 +231,70 @@ func TestMigrateConcurrent(t *testing.T) {
 	}
 
 	versions := migratedVersions(t, p)
-	if len(versions) != 1 {
-		t.Errorf("并发跑完版本表有 %d 行，期望 1（说明重复执行了）：%v",
-			len(versions), versions)
+
+	// 断言的是**意图**："每个迁移文件恰好一行"，不是"版本表恰好 1 行"。
+	// 写成后者的话，每加一条迁移这条测试都会红一次——而它想验的
+	// （并发下没有重复执行）一个字都没变。
+	want, err := migrationNames(migrations.FS)
+	if err != nil {
+		t.Fatalf("列迁移文件: %v", err)
+	}
+	if len(versions) != len(want) {
+		t.Errorf("并发跑完版本表有 %d 行，期望 %d（每个文件恰好一行）：%v",
+			len(versions), len(want), versions)
+	}
+	for _, name := range want {
+		if !slices.Contains(versions, name) {
+			t.Errorf("%s 没有被记录进版本表", name)
+		}
+	}
+}
+
+// acquireMigrateLock 的守卫：拿不到锁要**放弃**，不是无限等下去。
+//
+// 为什么这条值得留：迁移跑在**启动路径**上。无限等意味着健康检查永远起不来，
+// 编排系统看到的是"还在启动中"而不是"失败了"——而挂住不可恢复，失败可以重试。
+//
+// 做法：用另一条会话把锁占住，再把等待上限压到几百毫秒。
+func TestMigrateGivesUpWhenLockIsHeld(t *testing.T) {
+	p := testPool(t)
+	clean(t, p)
+
+	// 另一条会话占着锁。
+	//
+	// ⚠️ 必须在 Release **之前**显式解锁：Release 只是把连接还回池里、
+	// 并不关闭它，所以会话级的 advisory lock 会跟着那条连接留在池里，
+	// 后面所有测试都会跟着挂。
+	held, err := p.pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("取占锁连接: %v", err)
+	}
+	defer func() {
+		_, _ = held.Exec(context.Background(),
+			"SELECT pg_advisory_unlock($1)", migrateLockID)
+		held.Release()
+	}()
+	if _, err := held.Exec(context.Background(),
+		"SELECT pg_advisory_lock($1)", migrateLockID); err != nil {
+		t.Fatalf("占锁: %v", err)
+	}
+
+	old := lockWaitTimeout
+	lockWaitTimeout = 300 * time.Millisecond
+	defer func() { lockWaitTimeout = old }()
+
+	start := time.Now()
+	err = p.Migrate(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("锁被别人占着，Migrate 却成功了")
+	}
+	if !strings.Contains(err.Error(), "迁移锁") {
+		t.Errorf("错误信息该说清是锁的问题，实际: %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("等了 %v 才放弃 —— 等待还有上限吗？", elapsed)
 	}
 }
 
