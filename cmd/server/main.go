@@ -13,14 +13,64 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/aleksey-45/majspirit/internal/store"
 )
+
+// defaultTokenTTL 是登录令牌的有效期。
+const defaultTokenTTL = 24 * time.Hour
+
+// config 是 run 需要的全部配置。
+//
+// 它是个**显式传进来的值**，而不是"run 自己去读环境变量"。
+// 因为 run 要被测试（cmd/server/main_test.go 就在测它），而"测试一个会读
+// 环境变量的函数"意味着：谁忘了设某个变量，唯一的反馈是 os.Exit(1) 把整个
+// 测试进程杀掉，**一行输出都没有**——看起来像神秘崩溃，不像一条失败信息。
+//
+// 配置从外面传进来，这两个问题一起消失：测试直接构造一个字面量。
+type config struct {
+	Addr        string
+	DatabaseURL string
+	JWTSecret   []byte
+	TokenTTL    time.Duration
+}
+
+// loadConfig 从环境变量读配置，并且**一次报出所有缺失项**。
+//
+// 只报第一个的话，你会修一个、跑一次、再发现一个。
+//
+// 刻意不提供任何默认值：回落到内置默认值意味着"忘了配"和"配对了"在运行时
+// 长得一模一样，而它们本该在启动那一秒就被区分开。
+func loadConfig() (config, error) {
+	var missing []string
+	get := func(name string) string {
+		v := os.Getenv(name)
+		if v == "" {
+			missing = append(missing, name)
+		}
+		return v
+	}
+
+	cfg := config{
+		Addr:        get("MAJSPIRIT_ADDR"),
+		DatabaseURL: get("MAJSPIRIT_DATABASE_URL"),
+		JWTSecret:   []byte(get("MAJSPIRIT_JWT_SECRET")),
+		TokenTTL:    defaultTokenTTL,
+	}
+	if len(missing) > 0 {
+		return config{}, fmt.Errorf(
+			"缺少环境变量 %s（本地开发：cp .env.example .env，然后 make run）",
+			strings.Join(missing, "、"))
+	}
+	return cfg, nil
+}
 
 func main() {
 	// signal.NotifyContext 返回的 ctx 会在收到 Ctrl+C（os.Interrupt）
@@ -29,39 +79,44 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// main 里不写业务逻辑，只做这一件事：调 run，出错就报。
+	// main 里不写业务逻辑，只做两件事：读配置、调 run。
 	//
 	// 业务必须在 run 里而不是这里——os.Exit **会跳过所有 defer**，
 	// 写在 main 里的话连接池永远关不掉。
 	//
 	// 用 slog + os.Exit(1) 而不是 panic：配置缺失是可预期的失败，
 	// panic 会打一整串调用栈，把真正有用的那行信息淹掉。
-	if err := run(ctx); err != nil {
+	//
+	// os.Exit 只出现在 main 里，不出现在任何可测函数里：一个带 os.Exit 的
+	// 可测函数会在测试里把整个进程杀掉，而不是让某条用例红掉。
+	cfg, err := loadConfig()
+	if err != nil {
+		slog.Error("配置错误", "err", err)
+		os.Exit(1)
+	}
+
+	if err := run(ctx, cfg); err != nil {
 		slog.Error("服务端退出", "err", err)
 		os.Exit(1)
 	}
 }
 
 // run 是真正的 main。返回 error 而不是自己 os.Exit(1)，这样它的 defer 一定会执行。
-func run(ctx context.Context) error {
-	// ① 读配置。两个变量都没有默认值——忘了设必须立刻炸。
-	addr := mustEnv("MAJSPIRIT_ADDR")
-	dsn := mustEnv("MAJSPIRIT_DATABASE_URL")
-
-	// ② 连数据库
-	pool, err := store.New(ctx, dsn)
+func run(ctx context.Context, cfg config) error {
+	// ① 连数据库
+	pool, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	// ③ 跑迁移。失败就不该起服务——理由见文件头。
+	// ② 跑迁移。失败就不该起服务——理由见文件头。
 	if err := pool.Migrate(ctx); err != nil {
 		return fmt.Errorf("迁移数据库: %w", err)
 	}
 	slog.Info("数据库已就绪")
 
-	// ④ 路由。目前只有一个健康检查，§2.4 会在这里挂上真正的接口。
+	// ③ 路由。目前只有一个健康检查，§2.4 会在这里挂上 /api/。
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		// 健康检查要连数据库一起探：进程活着但连不上库，
@@ -74,26 +129,38 @@ func run(ctx context.Context) error {
 	})
 
 	srv := &http.Server{
-		Addr:    addr,
 		Handler: mux,
 		// 不设它的话，一个只发半个请求头的连接就能占住一个 goroutine 不放手
 		// （Slowloris 攻击）。这是 net/http 上少数几个「默认值不安全」的地方。
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// ⑤ 在后台起服务。ListenAndServe 会阻塞，所以放 goroutine；
-	// 主流程在下面等信号。
+	// ④ 先**同步**把端口绑上，成功了再打日志、再在后台服务。
+	//
+	// 这里刻意不用 srv.ListenAndServe()：它把"绑定"和"开工"揉在一起，
+	// 于是"已启动"那句日志只能写在它**前面**——而那时候还没绑上。
+	// 端口被占时，日志先说"HTTP 服务已启动"，紧接着报 bind 失败，
+	// 自相矛盾。谁在查"服务到底起没起"，都会被这句日志带进沟里。
+	//
+	// 拆开之后还有个好处：绑定失败是 run 的一个普通错误返回，
+	// 不绕 goroutine 和 errc 通道，调用方和测试都能立刻看到。
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("监听 %s: %w", cfg.Addr, err)
+	}
+
+	// ⑤ Serve 会阻塞，所以放 goroutine；主流程在下面等信号。
 	errc := make(chan error, 1) // 缓冲 1：即使没人来得及接收，那个 goroutine 也不会卡住
 	go func() {
-		slog.Info("HTTP 服务已启动", "addr", addr)
-		err := srv.ListenAndServe()
-		// 优雅关闭时 ListenAndServe 会返回 ErrServerClosed，那不是错误。
+		err := srv.Serve(ln)
+		// 优雅关闭时 Serve 会返回 ErrServerClosed，那不是错误。
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 			return
 		}
 		errc <- nil
 	}()
+	slog.Info("HTTP 服务已启动", "addr", ln.Addr().String())
 
 	// ⑥ 等两件事之一：收到退出信号，或者服务自己挂了。
 	select {
@@ -119,28 +186,4 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("已退出")
 	return nil
-}
-
-// mustEnv 读环境变量，没设就直接退出。
-//
-// 名字里的 must 是 Go 的习惯说法：做不到就别继续。
-//
-// **刻意不返回 error，也不提供默认值。**
-// 返回一个像 "Not set: XXX" 的字符串是错的——那个字符串会一路往下传，
-// 最后变成 store.New 里一句莫名其妙的「解析数据库连接串失败」，
-// 而你真正要看到的信息（**你忘了设哪个变量**）已经丢掉了。
-//
-// 配置错了必须在启动那一秒炸，而不是等到第一个请求打进来才以奇怪的方式失败。
-//
-// 它调用 os.Exit 是安全的：它只在 run 的开头被调用，那时还什么都没打开，
-// 没有任何 defer 需要执行。
-func mustEnv(name string) string {
-	v := os.Getenv(name)
-	if v == "" {
-		fmt.Fprintf(os.Stderr,
-			"缺少环境变量 %s\n本地开发：cp .env.example .env，然后用 make run（它会源入 .env）\n",
-			name)
-		os.Exit(1)
-	}
-	return v
 }
