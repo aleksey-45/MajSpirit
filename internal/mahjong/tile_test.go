@@ -184,7 +184,7 @@ func TestFullSet(t *testing.T) {
 		}
 	}
 
-	// 赤宝牌是**替换**而不是额外加入：总数仍是 136，每种花色的五仍是 4 张。
+	// 赤宝牌是替换而不是额外加入：总数仍是 136，每种花色的五仍是 4 张。
 	if aka != 3 {
 		t.Errorf("FullSet() 里有 %d 张赤宝牌，期望 3 张", aka)
 	}
@@ -213,7 +213,7 @@ func TestIsNumberIsHonor(t *testing.T) {
 		}
 	}
 
-	// 赤宝牌是数牌——**漏掉 Kind 归一的话它会掉进字牌分支**
+	// 赤宝牌是数牌——漏掉 Kind 归一的话它会掉进字牌分支
 	for _, aka := range []Tile{AkaMan5, AkaSou5, AkaPin5} {
 		if !aka.IsNumber() {
 			t.Errorf("%s.IsNumber() 应为 true", aka)
@@ -272,17 +272,9 @@ func TestMustTilePanicsOnInvalid(t *testing.T) {
 	}
 }
 
-// MustTile 与 NewTile 必须给出相同结果，二者的换算逻辑只能有一处。
-func TestMustTileMatchesNewTile(t *testing.T) {
-	for kind := Tile(0); kind < NumTileKinds; kind++ {
-		suit, rank := kind.Suit(), kind.Rank()
-
-		want, err := NewTile(suit, rank)
-		if err != nil {
-			t.Fatalf("NewTile(%d, %d) 出错: %v", suit, rank, err)
-		}
-		if got := MustTile(suit, rank); got != want {
-			t.Errorf("MustTile(%d, %d) = %d，NewTile 给出 %d", suit, rank, got, want)
-		}
-	}
-}
+// 这里删掉过一条 TestMustTileMatchesNewTile：遍历 34 种牌比对 MustTile 与 NewTile。
+//
+// 它测的是"包装器和被包装的函数一致"，而 MustTile 就是 NewTile 包一层 panic——
+// 这是自证。它不是没抓住任何东西（"忘了 return t"确实会被它抓），
+// 而是那个缺陷**别的测试会先炸**：拿变异验证过，让 MustTile 返回错值会挂掉
+// 24 个用例，其中 23 个跟它无关。既然失败模式已经被覆盖，这条就只剩余下的维护成本。

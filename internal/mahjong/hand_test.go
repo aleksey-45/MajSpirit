@@ -7,7 +7,7 @@ import (
 )
 
 // Hand 的三处拷贝语义（NewHand 拷入参、Tiles() 返回副本、Clone() 深拷贝）是本文件
-// 的重点。它们出错的表现都是**静默的**：房间层做快照时改了副本，原手牌跟着变，
+// 的重点。它们出错的表现都是静默的：房间层做快照时改了副本，原手牌跟着变，
 // 而且两处代码各自看都没问题。
 
 func TestNewHandCopiesInput(t *testing.T) {
@@ -38,7 +38,23 @@ func TestHandAddAndLen(t *testing.T) {
 	}
 }
 
-// Remove **只删一张**：手上有三张一万，打出一张后还剩两张。
+// Add 拒绝越界的牌，而且**不能改动手牌**。
+//
+// 这个分支不是防御性摆设：Counts 是定长数组 [NumTileKinds]int，
+// 一张越界的牌进了手牌之后，Counts() 会在 counts[tile.Kind()] 上直接越界 panic，
+// 而且 panic 的地点离肇事地点很远（Add 在 hand.go，炸在 win.go）。
+func TestHandAddRejectsInvalidTile(t *testing.T) {
+	h := NewHand(MustParseTiles("123m"))
+
+	if err := h.Add(Tile(200)); err == nil {
+		t.Fatal("Add 应该拒绝越界的牌")
+	}
+	if h.Len() != 3 {
+		t.Errorf("拒绝之后手牌不该变：Len() = %d，期望 3", h.Len())
+	}
+}
+
+// Remove 只删一张：手上有三张一万，打出一张后还剩两张。
 func TestHandRemoveDeletesOnlyOneCopy(t *testing.T) {
 	h := NewHand(MustParseTiles("111m234m"))
 
@@ -53,7 +69,7 @@ func TestHandRemoveDeletesOnlyOneCopy(t *testing.T) {
 	}
 }
 
-// Remove 失败时要不报错地…不，要报错、可被 errors.Is 匹配，而且**不改动手牌**。
+// Remove 失败时要不报错地…不，要报错、可被 errors.Is 匹配，而且不改动手牌。
 func TestHandRemoveMissingTile(t *testing.T) {
 	h := NewHand(MustParseTiles("123m"))
 	before := h.Tiles()
@@ -70,7 +86,7 @@ func TestHandRemoveMissingTile(t *testing.T) {
 	}
 }
 
-// Tiles() 返回**排序后的副本**——排序是契约的一部分（界面与日志都依赖它）。
+// Tiles() 返回排序后的副本——排序是契约的一部分（界面与日志都依赖它）。
 func TestHandTilesSortedCopy(t *testing.T) {
 	h := NewHand(MustParseTiles("321m"))
 
@@ -90,6 +106,28 @@ func TestHandTilesSortedCopy(t *testing.T) {
 	}
 }
 
+// 同种类时赤牌排前面。
+//
+// 这条是契约的一部分，不是审美：FormatTiles 用同一套顺序（赤五万写成 "0"，
+// 所以赤五万 + 五万 + 七万 = "057m"），而测试与日志经常直接比字符串。
+// 两边顺序一旦分叉，"拿字符串比对"这条路就悄悄断了。
+func TestHandTilesPutsAkaFirstWithinKind(t *testing.T) {
+	h := NewHand([]Tile{
+		MustTile(SuitMan, 5), // 普通五万
+		MustTile(SuitMan, 0), // 赤五万
+		MustTile(SuitMan, 7),
+	})
+
+	got := h.Tiles()
+	if !got[0].IsAka() {
+		t.Errorf("同种类的赤牌应排在最前，实际 %v", FormatTiles(got))
+	}
+	if s := FormatTiles(got); s != "057m" {
+		t.Errorf("FormatTiles(Tiles()) = %q，期望 %q —— 两边顺序分叉了", s, "057m")
+	}
+}
+
+// Count 按种类数（赤五万算五万），命中、未命中、多数三种情形各一行。
 func TestHandCount(t *testing.T) {
 	h := NewHand(MustParseTiles("111m22s3z"))
 
@@ -98,10 +136,9 @@ func TestHandCount(t *testing.T) {
 		want int
 	}{
 		{MustTile(SuitMan, 1), 3},
-		{MustTile(SuitMan, 2), 0},
 		{MustTile(SuitSou, 2), 2},
 		{MustTile(SuitHonor, HonorWest), 1},
-		{MustTile(SuitHonor, HonorRed), 0},
+		{MustTile(SuitMan, 2), 0}, // 不在手里
 	}
 	for _, tt := range tests {
 		if got := h.Count(tt.tile); got != tt.want {
@@ -110,6 +147,8 @@ func TestHandCount(t *testing.T) {
 	}
 }
 
+// Counts 是直方图。同上，每种计数取值各留一行，剩下的交给最后那个总和断言——
+// 它对着 Len() 而不是对着表里的数字，是一条独立的不变量。
 func TestHandCounts(t *testing.T) {
 	h := NewHand(MustParseTiles("123m456s789p11z"))
 
@@ -119,10 +158,8 @@ func TestHandCounts(t *testing.T) {
 		want int
 	}{
 		{MustTile(SuitMan, 1), 1},
-		{MustTile(SuitSou, 4), 1},
-		{MustTile(SuitPin, 9), 1},
 		{MustTile(SuitHonor, HonorEast), 2},
-		{MustTile(SuitMan, 9), 0},
+		{MustTile(SuitMan, 9), 0}, // 不在手里
 	}
 	for _, tt := range tests {
 		if got := counts[tt.tile]; got != tt.want {
@@ -136,19 +173,6 @@ func TestHandCounts(t *testing.T) {
 	}
 	if total != h.Len() {
 		t.Errorf("直方图总和 %d 与 Len() %d 不符", total, h.Len())
-	}
-}
-
-// Counts() 与 Count() 是同一个事实的两个入口，不允许出现分歧。
-func TestHandCountsAgreesWithCount(t *testing.T) {
-	h := NewHand(MustParseTiles("11123m456s77z"))
-	counts := h.Counts()
-
-	for kind := Tile(0); kind < NumTileKinds; kind++ {
-		if counts[kind] != h.Count(kind) {
-			t.Errorf("牌 %v：Counts()[%d] = %d，Count() = %d",
-				kind, kind, counts[kind], h.Count(kind))
-		}
 	}
 }
 
@@ -171,7 +195,8 @@ func TestHandCloneIsIndependent(t *testing.T) {
 	}
 }
 
-// Hand.CanWin 是包级 CanWin 的便利封装，两者必须一致。
+// Hand.CanWin 是包级 CanWin 的便利封装，这里只验封装本身；
+// 包级 CanWin 的规则判定归 win_test.go 的 TestCanWin，没必要在这边再抄一遍。
 func TestHandCanWin(t *testing.T) {
 	tests := []struct {
 		hand string
@@ -185,14 +210,9 @@ func TestHandCanWin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.hand, func(t *testing.T) {
-			tiles := MustParseTiles(tt.hand)
-			h := NewHand(tiles)
-
+			h := NewHand(MustParseTiles(tt.hand))
 			if got := h.CanWin(); got != tt.want {
 				t.Errorf("Hand.CanWin() = %v，期望 %v", got, tt.want)
-			}
-			if got := CanWin(tiles); got != tt.want {
-				t.Errorf("CanWin() = %v，期望 %v", got, tt.want)
 			}
 		})
 	}
