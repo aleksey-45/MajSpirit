@@ -232,7 +232,7 @@ func TestMigrateConcurrent(t *testing.T) {
 
 	versions := migratedVersions(t, p)
 
-	// 断言的是**意图**："每个迁移文件恰好一行"，不是"版本表恰好 1 行"。
+	// 断言的是意图："每个迁移文件恰好一行"，不是"版本表恰好 1 行"。
 	// 写成后者的话，每加一条迁移这条测试都会红一次——而它想验的
 	// （并发下没有重复执行）一个字都没变。
 	want, err := migrationNames(migrations.FS)
@@ -250,9 +250,9 @@ func TestMigrateConcurrent(t *testing.T) {
 	}
 }
 
-// acquireMigrateLock 的守卫：拿不到锁要**放弃**，不是无限等下去。
+// acquireMigrateLock 的守卫：拿不到锁要放弃，不是无限等下去。
 //
-// 为什么这条值得留：迁移跑在**启动路径**上。无限等意味着健康检查永远起不来，
+// 为什么这条值得留：迁移跑在启动路径上。无限等意味着健康检查永远起不来，
 // 编排系统看到的是"还在启动中"而不是"失败了"——而挂住不可恢复，失败可以重试。
 //
 // 做法：用另一条会话把锁占住，再把等待上限压到几百毫秒。
@@ -262,7 +262,7 @@ func TestMigrateGivesUpWhenLockIsHeld(t *testing.T) {
 
 	// 另一条会话占着锁。
 	//
-	// ⚠️ 必须在 Release **之前**显式解锁：Release 只是把连接还回池里、
+	// 必须在 Release 之前显式解锁：Release 只是把连接还回池里、
 	// 并不关闭它，所以会话级的 advisory lock 会跟着那条连接留在池里，
 	// 后面所有测试都会跟着挂。
 	held, err := p.pool.Acquire(context.Background())

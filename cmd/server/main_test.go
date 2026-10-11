@@ -18,7 +18,7 @@ import (
 
 // testConfig 拼一个能启动的配置。
 //
-// 配置是**传进去的**，所以这里一行 t.Setenv 都不需要——也就没有
+// 配置是传进去的，所以这里一行 t.Setenv 都不需要——也就没有
 // "忘了设某个变量 ⇒ os.Exit 杀掉整个测试进程、一行输出都没有"这种事。
 func testConfig(t *testing.T, addr string) config {
 	t.Helper()
@@ -40,7 +40,7 @@ func testConfig(t *testing.T, addr string) config {
 // 它守着 §2.2 验收里的一句话："未设置 secret 时服务拒绝启动，而不是回落到
 // 内置默认值"。两个容易写错的地方：
 //
-//   - 一次报出**所有**缺失项。只报第一个的话，你会修一个、跑一次、再发现一个。
+//   - 一次报出所有缺失项。只报第一个的话，你会修一个、跑一次、再发现一个。
 //   - 任何一个缺失都算失败，绝不回落默认值。
 func TestLoadConfigReportsEveryMissingVar(t *testing.T) {
 	names := []string{

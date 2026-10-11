@@ -29,10 +29,10 @@ const defaultTokenTTL = 24 * time.Hour
 
 // config 是 run 需要的全部配置。
 //
-// 它是个**显式传进来的值**，而不是"run 自己去读环境变量"。
+// 它是个显式传进来的值，而不是"run 自己去读环境变量"。
 // 因为 run 要被测试（cmd/server/main_test.go 就在测它），而"测试一个会读
 // 环境变量的函数"意味着：谁忘了设某个变量，唯一的反馈是 os.Exit(1) 把整个
-// 测试进程杀掉，**一行输出都没有**——看起来像神秘崩溃，不像一条失败信息。
+// 测试进程杀掉，一行输出都没有——看起来像神秘崩溃，不像一条失败信息。
 //
 // 配置从外面传进来，这两个问题一起消失：测试直接构造一个字面量。
 type config struct {
@@ -42,7 +42,7 @@ type config struct {
 	TokenTTL    time.Duration
 }
 
-// loadConfig 从环境变量读配置，并且**一次报出所有缺失项**。
+// loadConfig 从环境变量读配置，并且一次报出所有缺失项。
 //
 // 只报第一个的话，你会修一个、跑一次、再发现一个。
 //
@@ -81,7 +81,7 @@ func main() {
 
 	// main 里不写业务逻辑，只做两件事：读配置、调 run。
 	//
-	// 业务必须在 run 里而不是这里——os.Exit **会跳过所有 defer**，
+	// 业务必须在 run 里而不是这里——os.Exit 会跳过所有 defer，
 	// 写在 main 里的话连接池永远关不掉。
 	//
 	// 用 slog + os.Exit(1) 而不是 panic：配置缺失是可预期的失败，
@@ -135,10 +135,10 @@ func run(ctx context.Context, cfg config) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// ④ 先**同步**把端口绑上，成功了再打日志、再在后台服务。
+	// ④ 先同步把端口绑上，成功了再打日志、再在后台服务。
 	//
 	// 这里刻意不用 srv.ListenAndServe()：它把"绑定"和"开工"揉在一起，
-	// 于是"已启动"那句日志只能写在它**前面**——而那时候还没绑上。
+	// 于是"已启动"那句日志只能写在它前面——而那时候还没绑上。
 	// 端口被占时，日志先说"HTTP 服务已启动"，紧接着报 bind 失败，
 	// 自相矛盾。谁在查"服务到底起没起"，都会被这句日志带进沟里。
 	//
@@ -175,7 +175,7 @@ func run(ctx context.Context, cfg config) error {
 
 	// ⑦ 优雅关闭：停止接受新连接，给正在处理的请求留 10 秒。
 	//
-	// 这里**不能**直接用 ctx——它此刻已经被取消了，基于它派生超时会立刻到期，
+	// 这里不能直接用 ctx——它此刻已经被取消了，基于它派生超时会立刻到期，
 	// Shutdown 会马上返回，等于没等。所以用 WithoutCancel 剥掉取消状态、只保留值，
 	// 再自己加一个超时。
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)

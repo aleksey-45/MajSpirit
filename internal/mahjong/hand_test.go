@@ -38,7 +38,7 @@ func TestHandAddAndLen(t *testing.T) {
 	}
 }
 
-// Add 拒绝越界的牌，而且**不能改动手牌**。
+// Add 拒绝越界的牌，而且不能改动手牌。
 //
 // 这个分支不是防御性摆设：Counts 是定长数组 [NumTileKinds]int，
 // 一张越界的牌进了手牌之后，Counts() 会在 counts[tile.Kind()] 上直接越界 panic，
