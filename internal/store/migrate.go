@@ -18,28 +18,21 @@ import (
 // （0x4D616A53 = "MajS"）。换个数字就等于换一把锁，所以写死、不随机。
 const migrateLockID int64 = 0x4D616A53
 
-// 等锁的上限与轮询间隔。
+// lockWaitTimeout 是等锁的上限。没有它的话，持锁那个实例一旦卡住，后到的实例会
+// 永远挂在启动路径上（健康检查起不来）——挂住不可恢复，失败可以重试。
 //
-// 两个实例同时启动时"等一会儿"是设计目的；无限期等下去不是。
-// 持锁那个实例要是卡住了（比如它的某个 DDL 在等另一把锁），后到的实例会
-// 永远挂在启动路径上：健康检查起不来，编排系统看到的是"还在启动中"，
-// 而不是"失败了"——挂住是不可恢复的，失败是可重试的。
-// lockPollEvery 是轮询间隔。
-//
-// lockWaitTimeout 用 var 而不是 const：测试要把它压到几百毫秒才跑得动，
-// 否则光"拿不到锁会放弃"这一条用例就要跑满 30 秒。这是本文件唯一一个
-// 为测试留的口子，而且它只影响"等多久"，不影响任何判定。
+// 用 var 而不是 const：测试要把它压到几百毫秒，否则"拿不到锁会放弃"那条用例要跑满
+// 30 秒。
 var lockWaitTimeout = 30 * time.Second
 
+// lockPollEvery 是轮询间隔。
 const lockPollEvery = 200 * time.Millisecond
 
 // acquireMigrateLock 用 try 轮询拿锁。
 //
-// 为什么不用"阻塞式 pg_advisory_lock + 超时 ctx"：
-// 取消一个正在排队的 advisory lock 有竞态——取消请求可能在锁刚好发放
-// 之后才到。于是客户端收到错误、以为没拿到，锁却已经在这条会话手上了，
-// 而且没有任何人去解它（defer 的解锁是"拿到了"之后才注册的）。
-// 那会变成所有人一起卡死。try 版本没有这个窗口：要么明确拿到，要么明确没拿到。
+// 不用"阻塞式 pg_advisory_lock + 超时 ctx"：取消一个正在排队的 advisory lock 有
+// 竞态——取消请求可能在锁刚好发放之后才到，于是客户端以为没拿到、锁却已经在这条
+// 会话上了，而 defer 的解锁是"拿到了"之后才注册的 ⇒ 所有人一起卡死。
 func acquireMigrateLock(ctx context.Context, conn *pgxpool.Conn) error {
 	deadline := time.Now().Add(lockWaitTimeout)
 

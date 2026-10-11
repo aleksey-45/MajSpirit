@@ -1,4 +1,3 @@
-// Package auth 负责两件事：密码哈希，与登录令牌的签发和校验。
 package auth
 
 import (

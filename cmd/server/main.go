@@ -29,12 +29,8 @@ const defaultTokenTTL = 24 * time.Hour
 
 // config 是 run 需要的全部配置。
 //
-// 它是个显式传进来的值，而不是"run 自己去读环境变量"。
-// 因为 run 要被测试（cmd/server/main_test.go 就在测它），而"测试一个会读
-// 环境变量的函数"意味着：谁忘了设某个变量，唯一的反馈是 os.Exit(1) 把整个
-// 测试进程杀掉，一行输出都没有——看起来像神秘崩溃，不像一条失败信息。
-//
-// 配置从外面传进来，这两个问题一起消失：测试直接构造一个字面量。
+// 显式传进来而不是让 run 自己读环境变量：run 要被测试，而"读环境变量 + 里面有
+// os.Exit"意味着一忘设变量就把整个测试进程杀掉，一行输出都没有。
 type config struct {
 	Addr        string
 	DatabaseURL string
@@ -81,14 +77,11 @@ func main() {
 
 	// main 里不写业务逻辑，只做两件事：读配置、调 run。
 	//
-	// 业务必须在 run 里而不是这里——os.Exit 会跳过所有 defer，
-	// 写在 main 里的话连接池永远关不掉。
+	// 业务必须在 run 里而不是这里——os.Exit 会跳过所有 defer，写在 main 里的话
+	// 连接池永远关不掉。所以 os.Exit 也只出现在这里，不出现在任何可测函数里。
 	//
-	// 用 slog + os.Exit(1) 而不是 panic：配置缺失是可预期的失败，
-	// panic 会打一整串调用栈，把真正有用的那行信息淹掉。
-	//
-	// os.Exit 只出现在 main 里，不出现在任何可测函数里：一个带 os.Exit 的
-	// 可测函数会在测试里把整个进程杀掉，而不是让某条用例红掉。
+	// 用 slog + os.Exit(1) 而不是 panic：配置缺失是可预期的失败，panic 会打一整串
+	// 调用栈，把真正有用的那行信息淹掉。
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("配置错误", "err", err)

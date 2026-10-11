@@ -14,16 +14,14 @@ const maxUsernameLen = 32
 var ErrInvalidUsername = errors.New("用户名不符合要求")
 
 // ValidateUsername 检查用户名：字符集与密码相同（ASCII 可打印 0x20–0x7E）、
-// 长度 1–32、不能为空、首尾不能有空格。
+// 长度 1–32、不能为空。
 //
-// 首尾空格是拒绝而不是 trim：用户名是给别人看的，`alice` 与 `alice ` 在界面上
-// 长得一模一样却是两个账号，这种冒充空间是隐形的。
+// 首尾空格是拒绝而不是 trim：存进去的必须就是用户敲的那个字符串，否则"注册时
+// 是什么、登录时就得敲什么"这条会断。
 //
-// 登录路径不校验这条——规则一旦收紧，老账号的名字可能不再合规，校验就是把人
-// 锁在门外。
+// 全空格也在这里挡住——数据库那条 CHECK 会拒，但用户看到的会是 23514 而不是人话。
 //
-// 全空格必须在这里挡住，否则用户拿到的是 users_username_not_blank 抛出的
-// 23514，而不是一句看得懂的话。
+// 只用于注册和改密码，不要用在登录上。
 func ValidateUsername(name string) error {
 	// 与 ValidatePassword 里那条范围判断重复是有意的：一致性由
 	// TestCharsetIsIdenticalForUsernameAndPassword 逐个码点钉住。

@@ -19,6 +19,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ── 运行阶段 ──
 FROM gcr.io/distroless/static-debian12:nonroot
 
+# 这一阶段**只拷二进制**，镜像里没有 SQL 文件。
+# 所以 migrations/*.sql 必须靠 //go:embed 编译进去（见 migrations/embed.go）——
+# 改成运行时读磁盘的话，本地能跑、进容器就找不到文件，而且是在启动时才炸。
 COPY --from=build /out/majspirit /majspirit
 
 EXPOSE 8080
