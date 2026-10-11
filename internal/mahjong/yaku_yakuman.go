@@ -61,7 +61,7 @@ func (h *hand) yakuman() []YakuHit {
 		add(yakuTsuuiisou)
 	}
 
-	// 绿一色：只由 2/3/4/6/8 索构成。M-League **不要求含发**。
+	// 绿一色：只由 2/3/4/6/8 索构成。M-League 不要求含发。
 	if allOf(tiles, func(t Tile) bool {
 		if t.Suit() != SuitSou {
 			return false

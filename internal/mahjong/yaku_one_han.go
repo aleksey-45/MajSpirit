@@ -10,7 +10,7 @@ func (h *hand) detectOne(hits *[]YakuHit) {
 		}
 	}
 
-	// 状况役。注意岭上/抢杠/海底/河底**副露也成立**，不是门清限定。
+	// 状况役。注意岭上/抢杠/海底/河底副露也成立，不是门清限定。
 	if h.ctx.IsRiichi {
 		add(yakuRiichi)
 	}
@@ -33,7 +33,7 @@ func (h *hand) detectOne(hits *[]YakuHit) {
 		add(yakuMenzenTsumo)
 	}
 
-	// 役牌：**看刻子，不看雀头**。雀头是连风牌只给符数，不是役。
+	// 役牌：看刻子，不看雀头。雀头是连风牌只给符数，不是役。
 	// 连风牌（场风 == 自风）时两个役都成立，共 2 翻。
 	for _, m := range h.tripletLike() {
 		t := m.Tile()
@@ -60,7 +60,7 @@ func (h *hand) detectOne(hits *[]YakuHit) {
 	}
 }
 
-// isTanyao 判定断幺九：全部牌都是中张（2-8），**没有幺九牌也没有字牌**。
+// isTanyao 判定断幺九：全部牌都是中张（2-8），没有幺九牌也没有字牌。
 //
 // 注意字牌点数是 1-7，所以不能只判 Rank()==1||9——白(5)/发(6)/中(7) 会漏过去。
 func (h *hand) isTanyao() bool {
@@ -70,7 +70,7 @@ func (h *hand) isTanyao() bool {
 }
 
 // isPinfu 判定平和。四个条件缺一不可：
-// 门清、四面子全顺子、雀头**非役牌**、**两面听**。
+// 门清、四面子全顺子、雀头非役牌、两面听。
 func (h *hand) isPinfu() bool {
 	if !h.menzen() {
 		return false
@@ -80,7 +80,7 @@ func (h *hand) isPinfu() bool {
 			return false
 		}
 	}
-	// 雀头不能是役牌。**不能简单排除所有字牌**——
+	// 雀头不能是役牌。不能简单排除所有字牌——
 	// 东场自风为东时，北雀头是合法的平和。
 	if h.isYakuhaiTile(h.pair()) {
 		return false

@@ -28,9 +28,9 @@ func (h *Hand) Add(t Tile) error {
 	return nil
 }
 
-// Remove 删除**指定的那一张**。失败返回可被 errors.Is 匹配的哨兵错误。
+// Remove 删除指定的那一张。失败返回可被 errors.Is 匹配的哨兵错误。
 //
-// 这里是**精确匹配**，不走 Kind：赤五万与普通五万在牌面上看得出来，
+// 这里是精确匹配，不走 Kind：赤五万与普通五万在牌面上看得出来，
 // 玩家出牌时必须能指定要打哪一张，所以 Remove(赤五万) 不会动到普通五万。
 func (h *Hand) Remove(t Tile) error {
 	for i, tile := range h.tiles {
@@ -45,7 +45,7 @@ func (h *Hand) Len() int {
 	return len(h.tiles)
 }
 
-// Count 统计某种牌的数量。**按种类**：手里有赤五万时 Count(五万) 返回 1。
+// Count 统计某种牌的数量。按种类：手里有赤五万时 Count(五万) 返回 1。
 // 规则判定要的就是这个口径；想单独数赤宝牌用 CountAka。
 func (h *Hand) Count(t Tile) int {
 	k := t.Kind()
@@ -58,7 +58,7 @@ func (h *Hand) Count(t Tile) int {
 	return count
 }
 
-// Tiles 返回排序后的副本。按**种类**升序，同种类时赤牌在前——
+// Tiles 返回排序后的副本。按种类升序，同种类时赤牌在前——
 // 和 FormatTiles 的顺序一致，便于测试里直接比对字符串。
 func (h *Hand) Tiles() []Tile {
 	tiles := append([]Tile(nil), h.tiles...)
@@ -71,7 +71,7 @@ func (h *Hand) Tiles() []Tile {
 	return tiles
 }
 
-// Counts 统计每种牌的数量，**按种类**（赤五万算作五万）。
+// Counts 统计每种牌的数量，按种类（赤五万算作五万）。
 // 与 CountTiles 的口径必须一致：两处都喂给 Decompose。
 func (h *Hand) Counts() Counts {
 	counts := Counts{}

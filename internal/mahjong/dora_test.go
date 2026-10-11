@@ -4,7 +4,7 @@ import "testing"
 
 // dora_test.go —— 宝牌与赤宝牌。规则见 docs/规则集.md §4。
 
-// 指示牌 → 宝牌。**字牌是两段独立循环**，这是最容易写成单一取模然后错掉的地方。
+// 指示牌 → 宝牌。字牌是两段独立循环，这是最容易写成单一取模然后错掉的地方。
 func TestDoraFromIndicator(t *testing.T) {
 	tests := []struct {
 		name string
@@ -55,7 +55,7 @@ func TestCountDora(t *testing.T) {
 	}{
 		{"无指示牌", "123m456s789p11z", nil, 0},
 		{"九万指示一万", "123m456s789p11z", []string{"9m"}, 1},
-		// 两张相同的指示牌意味着**宝牌翻倍**，不能去重
+		// 两张相同的指示牌意味着宝牌翻倍，不能去重
 		{"同一指示牌重复两次", "123m456s789p11z", []string{"9m", "9m"}, 2},
 		{"指示牌不在手里", "123m456s789p11z", []string{"5m"}, 0},
 		{"两张不同指示牌", "123m456s789p11z", []string{"9m", "5s"}, 2},
@@ -133,7 +133,7 @@ func TestHandAkaQueries(t *testing.T) {
 	}
 }
 
-// 赤五万必须和普通五万拆出**完全一样**的牌型——这是「赤属性不参与牌型」的直接检验。
+// 赤五万必须和普通五万拆出完全一样的牌型——这是「赤属性不参与牌型」的直接检验。
 func TestAkaCountsAsItsKindForShape(t *testing.T) {
 	pairs := []struct{ normal, aka string }{
 		{"456m123m789m123s11p", "406m123m789m123s11p"}, // 顺子里的五万
@@ -173,10 +173,10 @@ func TestAkaCountsAsItsKindForShape(t *testing.T) {
 	}
 }
 
-// ⚠️ 静默陷阱的回归测试。
+// 静默陷阱的回归测试。
 //
 // ctx.WinningTile 不经过 Counts，如果它没被归一，waitFu 拿赤五万去和面子的牌
-// 做相等比较会一张都比不中，嵌张的 +2 直接丢掉。30 符和 40 符**点数不一样**，
+// 做相等比较会一张都比不中，嵌张的 +2 直接丢掉。30 符和 40 符点数不一样，
 // 所以这条测试能真的抓到这个 bug——不像大多数 +2 符的错误会被取整吃掉。
 func TestCalcFuWithAkaWinningTileEmbedWait(t *testing.T) {
 	tiles := MustParseTiles("46m0m123s789s123p22p") // 和牌张是赤五万，嵌张 4-6 万
@@ -248,7 +248,7 @@ func TestAllTilesIncludesMelds(t *testing.T) {
 
 // 这条锁住 AllTiles 为什么不收 Decomposition：
 // Decomposition 是从 Counts 建出来的（CountTiles 已把赤牌归一），所以
-// `Decomposition.Tiles()` 里**永远数不到赤宝牌**。用它的签名会让人写出
+// `Decomposition.Tiles()` 里永远数不到赤宝牌。用它的签名会让人写出
 // 「赤宝牌翻数恒为 0」且测试还过得去的代码。
 func TestDecompositionLosesAka(t *testing.T) {
 	decs, err := Decompose(MustParseTiles("406m789m11z"))

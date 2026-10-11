@@ -7,7 +7,7 @@ import "slices"
 
 // hand 把暗牌拆法与副露合成一个视图。
 //
-// 为什么要合并：**大量役横跨副露与暗牌**——三色同顺可能是一组暗顺 + 两组副露顺，
+// 为什么要合并：大量役横跨副露与暗牌——三色同顺可能是一组暗顺 + 两组副露顺，
 // 混一色要数全部牌，三杠子要数所有杠。只看 d.Melds 或只看 ctx.Melds 都会漏。
 type hand struct {
 	d     Decomposition
@@ -38,7 +38,7 @@ func (h *hand) tiles() []Tile {
 func (h *hand) menzen() bool { return h.ctx.IsMenzen }
 func (h *hand) pair() Tile   { return h.d.Pair }
 
-// suitSet 返回手牌里出现过的**数牌**花色，以及是否含字牌。
+// suitSet 返回手牌里出现过的数牌花色，以及是否含字牌。
 func (h *hand) suitSet() (map[Suit]bool, bool) {
 	suits := map[Suit]bool{}
 	hasHonor := false

@@ -8,7 +8,7 @@ import (
 // meldTiles 返回一个面子实际占用的牌。
 //
 // Meld.Tiles 是定长 [4]Tile：顺子/刻子只用前 3 个，杠用满 4 个。所以读取时
-// **必须靠 Kind 判断长度**，不能直接遍历整个数组——第 4 个元素在非杠面子里
+// 必须靠 Kind 判断长度，不能直接遍历整个数组——第 4 个元素在非杠面子里
 // 是零值 Tile(0)，也就是「一万」，直接遍历会凭空多出一张一万。
 func meldTiles(m Meld) []Tile {
 	if m.Kind == MeldKan {
@@ -47,7 +47,7 @@ func TestCanWin(t *testing.T) {
 		{"字牌刻子", "111z222z333z444z55z", true},
 		{"多解", "111222333m456s77p", true},
 
-		// 四张同种**是合法的**，不是错误：
+		// 四张同种是合法的，不是错误：
 		// 111m 刻子 + 123m 顺子，四张一万各有归属。
 		{"暗牌四张同种", "111123m456m789m11p", true},
 
@@ -73,8 +73,8 @@ func TestCanWin(t *testing.T) {
 		// 空与单张：形状检查必须挡住，不能 panic
 		{"空手牌", "", false},
 		{"单张", "1m", false},
-		// ⚠️ 注意这一条：2 张是 3k+2，会被当成「四个副露 + 这个雀头」而判为完整。
-		// CanWin 的参数里没有副露，只能按**张数**推断要凑几个面子——
+		// 注意这一条：2 张是 3k+2，会被当成「四个副露 + 这个雀头」而判为完整。
+		// CanWin 的参数里没有副露，只能按张数推断要凑几个面子——
 		// 「四杠子只剩雀头」与「误传了两张」在这一层无法区分，是调用方的责任。
 		{"两张同种（= 四个副露 + 雀头，四杠子的形状）", "11m", true},
 	}
@@ -91,7 +91,7 @@ func TestCanWin(t *testing.T) {
 // ── 多解：必须全部产出，且内容各不相同 ──────────────────────────────────
 
 // 111222333m 既能拆成三个刻子，也能拆成三个顺子。
-// 这条同时是一个**切片别名哨兵**：如果 dfs 在叶子处直接存 melds 而不拷贝，
+// 这条同时是一个切片别名哨兵：如果 dfs 在叶子处直接存 melds 而不拷贝，
 // 两种拆法会共用底层数组，后者把前者覆盖掉——表现为「返回 2 个一模一样的拆法」。
 func TestDecomposeReturnsAllDecompositions(t *testing.T) {
 	decs, err := Decompose(MustParseTiles("111222333m456s77p"))
@@ -188,7 +188,7 @@ func TestDecomposeIsDeterministic(t *testing.T) {
 	}
 }
 
-// ── 七对子与国士：**也在 Decompose 的返回值里** ──────────────────────────
+// ── 七对子与国士：也在 Decompose 的返回值里 ──────────────────────────
 //
 // 这条是后来改的设计：DetectYaku 只拿到 Decomposition，不产出这两种形态的话，
 // 七对子这个 2 翻役永远判不出来。所以 Decompose 现在返回三种 Shape。
@@ -227,7 +227,7 @@ func TestSpecialShapes(t *testing.T) {
 	}
 }
 
-// 同种四张不算两个对子——七对子要求七个**不同种类**的对子。
+// 同种四张不算两个对子——七对子要求七个不同种类的对子。
 func TestChiitoitsuRejectsFourOfAKind(t *testing.T) {
 	counts := Counts{}
 	counts[0] = 4
@@ -239,7 +239,7 @@ func TestChiitoitsuRejectsFourOfAKind(t *testing.T) {
 	}
 }
 
-// 雀头枚举必须**穷尽所有可能**，不能只试第一种就返回。
+// 雀头枚举必须穷尽所有可能，不能只试第一种就返回。
 //
 // 11223344556677m 是最好的例子：它是七对子，同时有三种标准拆法，
 // 雀头分别取 1m / 4m / 7m：
@@ -248,7 +248,7 @@ func TestChiitoitsuRejectsFourOfAKind(t *testing.T) {
 //	雀头 4m → 123m 123m 567m 567m
 //	雀头 7m → 123m 123m 456m 456m
 //
-// 只返回一种的实现会让**役种判定算出错误的结果**——例如只有第一种拆法时
+// 只返回一种的实现会让役种判定算出错误的结果——例如只有第一种拆法时
 // 看不到「一杯口」（123m 123m），只有第三种时看不到「一气通贯」的可能。
 func TestMultiplePairChoices(t *testing.T) {
 	decs, err := Decompose(MustParseTiles("11223344556677m"))
@@ -558,7 +558,7 @@ func TestRunBoundaries(t *testing.T) {
 	}
 }
 
-// Meld 的四个谓词。**IsTriplet 与 IsTripletLike 的区别是有意义的**：
+// Meld 的四个谓词。IsTriplet 与 IsTripletLike 的区别是有意义的：
 // 対々和 / 三暗刻看 IsTripletLike（杠也算一组「三张一样」），
 // 而符数计算必须分清刻子和杠（2/4 与 8/16）。
 func TestMeldPredicates(t *testing.T) {

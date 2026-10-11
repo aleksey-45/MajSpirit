@@ -2,12 +2,12 @@ package mahjong
 
 // dora.go —— 宝牌计数（docs/规则集.md §4）。
 //
-// 为什么单独一个文件：宝牌**不是役**，它不参与「能不能和牌」的判定，
+// 为什么单独一个文件：宝牌不是役，它不参与「能不能和牌」的判定，
 // 只在这一步加翻数——
 //
 //	⑥ 汇总翻数 → 役翻数 + 宝牌 + 里宝 + 赤宝
 //
-// 所以它必须发生在 DetectYaku **之后**、CalcScore **之前**。放错位置会做出
+// 所以它必须发生在 DetectYaku 之后、CalcScore 之前。放错位置会做出
 // 「只有宝牌也能和牌」的游戏；役满时这一步整个跳过。
 //
 // 赤宝牌数翻数是 `CountDora(tiles, indicators) + CountAka(tiles)`：
@@ -41,13 +41,13 @@ func DoraFromIndicator(indicator Tile) Tile {
 
 // CountDora 数出 tiles 里有多少张由 indicators 指示的宝牌。
 //
-// **指示牌列表不能去重**：两张相同的指示牌意味着宝牌翻倍，所以要按重数计。
+// 指示牌列表不能去重：两张相同的指示牌意味着宝牌翻倍，所以要按重数计。
 // 杠同样按实际张数计（TilesUsed 已经处理了「杠用满 4 张」）。
 //
-// **赤宝牌按种类参与这里**：赤五万在「五万是宝牌」时照样算一张宝牌，
+// 赤宝牌按种类参与这里：赤五万在「五万是宝牌」时照样算一张宝牌，
 // 它额外多出的那一张由 CountAka 计——两者相加才是赤牌的总价值。
 //
-// 里宝牌用同一个函数，只是把 indicators 换成里宝牌指示牌——**并且只在立直和牌时才调用**
+// 里宝牌用同一个函数，只是把 indicators 换成里宝牌指示牌——并且只在立直和牌时才调用
 // （里宝牌不立直不翻开）。
 func CountDora(tiles []Tile, indicators []Tile) int {
 	if len(indicators) == 0 {
@@ -73,7 +73,7 @@ func CountDora(tiles []Tile, indicators []Tile) int {
 
 // CountAka 返回 tiles 里的赤宝牌张数，每张 +1 翻。
 //
-// 和普通宝牌**分别计**：赤五万既是赤宝牌、也可能是宝牌，两个 +1 都要给。
+// 和普通宝牌分别计：赤五万既是赤宝牌、也可能是宝牌，两个 +1 都要给。
 // 因此数翻数时是 `CountDora(...) + CountAka(...)`。
 // 张数上限由牌山保证（每种一张，M-League【M】第 2 章第 2 条 2）。
 func CountAka(tiles []Tile) int {
@@ -86,14 +86,14 @@ func CountAka(tiles []Tile) int {
 	return n
 }
 
-// AllTiles 返回一次和牌用到的**全部牌**：暗牌（含和牌张）+ 副露。
+// AllTiles 返回一次和牌用到的全部牌：暗牌（含和牌张）+ 副露。
 //
 // 数宝牌必须用全部牌——副露里的宝牌同样计数。写成「只看手牌」会漏掉副露里的，
 // 而那种错误只在有人鸣牌时才出现。
 //
-// ⚠️ **concealed 必须传原始牌，不能传 `Decomposition.Tiles()`。**
+// concealed 必须传原始牌，不能传 `Decomposition.Tiles()`。
 // Decomposition 是从 Counts 建出来的（见 CountTiles），赤宝牌在那里已经被归一成
-// 普通牌，所以拿它来数赤宝牌会**一张都数不到**。这个签名不给 Decomposition 留位置，
+// 普通牌，所以拿它来数赤宝牌会一张都数不到。这个签名不给 Decomposition 留位置，
 // 就是为了让这个错误写不出来。
 
 func AllTiles(concealed []Tile, melds []Meld) []Tile {

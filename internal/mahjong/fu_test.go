@@ -6,7 +6,7 @@ import "testing"
 //
 // 期望值来源：
 //   - §5 的加符表（副底 20、面子符、雀头符、待ち符、门清荣和、自摸）
-//   - §12 例 4 的**逐项拆解**（36 → 40）——文档把每一项都写出来了，是最好的一条
+//   - §12 例 4 的逐项拆解（36 → 40）——文档把每一项都写出来了，是最好的一条
 //   - §5 明写「连风牌也只算 2 符」这条 M-League 特例
 
 // 带副露的手牌要分开给：Decompose 只收暗牌。
@@ -44,7 +44,7 @@ func closedMeld(kind MeldKind, tiles ...Tile) Meld {
 
 // 面子符的完整表：明/暗 × 中张/幺九 × 刻子/杠。
 //
-// 这里**直接测未导出的 meldFu**，和 BasePoints 被导出供测试直接用是同一个理由：
+// 这里直接测未导出的 meldFu，和 BasePoints 被导出供测试直接用是同一个理由：
 // 这张表本身就是规格（§5），不是实现结构。绕过它去测 CalcFu 的话，
 // 10 符取整会把 2/4/4/8 的差别全部抹平——四种组合累加后都是 30 符。
 func TestMeldFuTable(t *testing.T) {
@@ -123,7 +123,7 @@ func TestCalcFuMenzenRonBonus(t *testing.T) {
 
 // 自摸 +2。用非平和的手牌，免得撞上「平和自摸固定 20」那条特例。
 //
-// 期望值刻意选在**跨过 10 符取整边界**的位置：30 → 30，32 → 40。
+// 期望值刻意选在跨过 10 符取整边界的位置：30 → 30，32 → 40。
 // 如果只差 2 符但两边都落在同一个十位区间，这条测试就测不出东西。
 func TestCalcFuTsumoBonus(t *testing.T) {
 	// 暗刻 111m(幺九 8) + 明刻 222p(中张 2) + 两顺子 + 雀头 55p
@@ -145,7 +145,7 @@ func TestCalcFuTsumoBonus(t *testing.T) {
 	}
 }
 
-// 平和自摸固定 20 符，**不加自摸的 2 符**。
+// 平和自摸固定 20 符，不加自摸的 2 符。
 func TestCalcFuPinfuTsumoIs20(t *testing.T) {
 	hand := "234m567m234s456s88p"
 	win := MustTile(SuitSou, 4)
@@ -165,9 +165,9 @@ func TestCalcFuPinfuTsumoIs20(t *testing.T) {
 	}
 }
 
-// 七对子固定 25 符，**不取整**，而且不看和牌张/自摸/门清。
+// 七对子固定 25 符，不取整，而且不看和牌张/自摸/门清。
 func TestCalcFuChiitoitsuIs25(t *testing.T) {
-	// 七对子专用夹具：全部是对子且**组不出任何顺子**，保证只有一种拆法
+	// 七对子专用夹具：全部是对子且组不出任何顺子，保证只有一种拆法
 	const hand = "1188m1199s1199p11z"
 
 	ctxs := []YakuContext{
@@ -190,14 +190,14 @@ func TestCalcFuKokushiIs0(t *testing.T) {
 	}
 }
 
-// 荣和的那张牌补成的刻子算**明刻**（§5）。
+// 荣和的那张牌补成的刻子算明刻（§5）。
 //
-// ⚠️ **§12 例 4 抓不住这一条**，因为那条的合计是 36，掺进这一条错误后变成 38，
-// 两者都取整到 40。所以专门造一个**卡在取整边界上**的夹具：
+// §12 例 4 抓不住这一条，因为那条的合计是 36，掺进这一条错误后变成 38，
+// 两者都取整到 40。所以专门造一个卡在取整边界上的夹具：
 //
 //	副底 20 + 111m 明刻幺九 4 + 999m 暗刻幺九 8 + 222s 暗刻中张 4 + 55z 雀头白 2 = 40
 //
-// 把 333s 错算成暗刻会变成 42 → **50**，一眼就能看见。
+// 把 333s 错算成暗刻会变成 42 → 50，一眼就能看见。
 func TestCalcFuRonCompletedTripletIsOpen(t *testing.T) {
 	concealed := "999m222s333s55z"
 	melds := []Meld{openMeld(MeldTriplet,
@@ -214,7 +214,7 @@ func TestCalcFuRonCompletedTripletIsOpen(t *testing.T) {
 			"得到 50 说明那张牌组成的 333s 被算成了暗刻（该 +2 的给了 +4）", got)
 	}
 
-	// 反向对照：自摸时同一个 333s **是暗刻**，因为和牌张不是从别人手里来的。
+	// 反向对照：自摸时同一个 333s 是暗刻，因为和牌张不是从别人手里来的。
 	// 这时加上自摸的 2 符：20 + 4 + 8 + 4 + 4 + 2 + 2(自摸) = 44 → 50。
 	tsumo := fuOfWithMelds(t, concealed, melds, YakuContext{
 		WinningTile: MustTile(SuitSou, 3),
@@ -241,7 +241,7 @@ func TestCalcFuWorkedExample4(t *testing.T) {
 	}
 
 	got := fuOfWithMelds(t, concealed, melds, YakuContext{
-		WinningTile: MustTile(SuitSou, 3), // 荣和 3s：它补上的 333s 算**明刻**
+		WinningTile: MustTile(SuitSou, 3), // 荣和 3s：它补上的 333s 算明刻
 		RoundWind:   MustTile(SuitHonor, HonorEast),
 		SeatWind:    MustTile(SuitHonor, HonorSouth),
 	})
@@ -253,7 +253,7 @@ func TestCalcFuWorkedExample4(t *testing.T) {
 	}
 
 	// 反向对照：和牌张换成 2s，则 222s 变成明刻、333s 保持暗刻。
-	// 两者的面子符相同（都是中张、一明一暗），但**位置互换了** ——
+	// 两者的面子符相同（都是中张、一明一暗），但位置互换了 ——
 	// 如果 isConcealedMeld 只按「是不是和牌张」判断而不管在哪一组，这条会一样；
 	// 如果它写成了「所有刻子都算暗」，上面那条就会失败。
 	swapped := fuOfWithMelds(t, concealed, melds, YakuContext{
@@ -266,7 +266,7 @@ func TestCalcFuWorkedExample4(t *testing.T) {
 	}
 }
 
-// 连风牌雀头只算 2 符，**不是 4**（M-League 特例，见 §14.2）。
+// 连风牌雀头只算 2 符，不是 4（M-League 特例，见 §14.2）。
 //
 // 期望值同样选在取整边界上：38 + 2 = 40 → 40，38 + 4 = 42 → 50。
 func TestCalcFuDoubleWindPairIsOnly2(t *testing.T) {
@@ -290,7 +290,7 @@ func TestCalcFuDoubleWindPairIsOnly2(t *testing.T) {
 
 // 待ち符：单骑/嵌张/边张各 +2，两面与双碰 +0。
 //
-// 表格特意用**同一副暗牌 + 不同和牌张**，让唯一的变量就是待ち形。
+// 表格特意用同一副暗牌 + 不同和牌张，让唯一的变量就是待ち形。
 // IsMenzen 一律为 false，把门清荣和的 +10 摘掉，20 / 30 的对比才干净。
 func TestCalcFuWaitShapes(t *testing.T) {
 	tests := []struct {

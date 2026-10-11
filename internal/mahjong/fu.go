@@ -5,9 +5,9 @@ package mahjong
 // 和牌张从 ctx.WinningTile 取（原来的独立参数已去掉——两个来源会不一致）。
 //
 // 三个必须单独处理的点：
-//   - **七对子固定 25 符**，不参与取整
-//   - **平和自摸固定 20 符**（不加自摸的 2 符）
-//   - **取整只做一次**，在所有加符项累加完之后向上取整到 10 符
+//   - 七对子固定 25 符，不参与取整
+//   - 平和自摸固定 20 符（不加自摸的 2 符）
+//   - 取整只做一次，在所有加符项累加完之后向上取整到 10 符
 func CalcFu(d Decomposition, ctx YakuContext) int {
 	switch d.Shape {
 	case ShapeChiitoitsu:
@@ -17,7 +17,7 @@ func CalcFu(d Decomposition, ctx YakuContext) int {
 	}
 
 	// 赤宝牌在这里归一成普通牌。下面 waitFu 与 isConcealedMeld 都在拿
-	// ctx.WinningTile 和面子的牌做**相等比较**，留着赤牌编号就一张都比不中：
+	// ctx.WinningTile 和面子的牌做相等比较，留着赤牌编号就一张都比不中：
 	// 待ち形会误判成两面（该 +2 的变成 +0），荣和补成的刻子会误判成暗刻（+2 变 +4）。
 	h := newHand(d, ctx.normalized())
 	ctx = h.ctx // 之后的 ctx 一律指归一后的版本，避免两处来源不一致
@@ -34,7 +34,7 @@ func CalcFu(d Decomposition, ctx YakuContext) int {
 	}
 
 	// 雀头符：役牌 +2。
-	// **连风牌（场风==自风）在 M-League 也只算 2 符**，不是 4
+	// 连风牌（场风==自风）在 M-League 也只算 2 符，不是 4
 	// （docs/规则集.md §14.2；官方第 6 章第 3 条 2 注）。
 	if h.isYakuhaiTile(d.Pair) {
 		fu += 2
@@ -54,7 +54,7 @@ func CalcFu(d Decomposition, ctx YakuContext) int {
 
 // isConcealedMeld 报告一个面子在符数计算里是否算「暗」。
 //
-// d.Melds 是暗牌拆出来的，默认是暗的；但**荣和补上的那一张组成的刻子算明刻**
+// d.Melds 是暗牌拆出来的，默认是暗的；但荣和补上的那一张组成的刻子算明刻
 // ——这条同时影响三暗刻/四暗刻是否成立，以及符数。
 func (h *hand) isConcealedMeld(m Meld) bool {
 	if m.IsOpen {
@@ -70,7 +70,7 @@ func (h *hand) isConcealedMeld(m Meld) bool {
 	return true
 }
 
-// meldFu 返回一个面子的符数。**顺子与对子都恒为 0。**
+// meldFu 返回一个面子的符数。顺子与对子都恒为 0。
 //
 // MeldPair 只在七对子里出现，那种形态固定 25 符、由 CalcFu 提前返回，
 // 正常路径下走不到这里。仍然显式返回 0，是为了让「哪天那个提前返回被改掉」
@@ -121,5 +121,5 @@ func waitFu(d Decomposition, t Tile) int {
 	return 0 // 两面 / 双碰
 }
 
-// roundUp10 向上取整到 10 符。**只在整个累加完成后调用一次**——分次取整会累积误差。
+// roundUp10 向上取整到 10 符。只在整个累加完成后调用一次——分次取整会累积误差。
 func roundUp10(fu int) int { return (fu + 9) / 10 * 10 }

@@ -4,7 +4,7 @@ package mahjong
 //
 // 为什么不重复各 *_test.go：牌与记法、牌山、手牌、役种、符数、点数那六组已经
 // 逐条覆盖了（见各自的文件）。这里只补 §1.9 点名的那三项横切手段——
-// **不变量（§2）、构造法（§3）、穷举比对（§4）**——外加 §2.5 数值范围与 §5 模糊测试。
+// 不变量（§2）、构造法（§3）、穷举比对（§4）——外加 §2.5 数值范围与 §5 模糊测试。
 //
 // 清单里唯一无法在此验证的是「可验证性」组（Commit / DeriveSeed / 重放）：
 // verify.go 目前只有 package 声明。
@@ -30,7 +30,7 @@ func expandCounts(counts []int, kinds []Tile) []Tile {
 
 // forEachMultiset 枚举「kinds 种牌、每种最多 maxPer 张、合计 total 张」的全部组合。
 //
-// 为什么不用 rand 抽样：§4 的全部价值在于**穷举**——抽样漏掉的那个组合，
+// 为什么不用 rand 抽样：§4 的全部价值在于穷举——抽样漏掉的那个组合，
 // 恰好就是剪枝写错时唯一会暴露的那个。
 func forEachMultiset(kinds, total, maxPer int, fn func(counts []int)) {
 	counts := make([]int, kinds)
@@ -62,7 +62,7 @@ var orphanKinds = []Tile{0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33}
 
 // validMeldShape 校验一个面子的形态是否合法。
 //
-// 顺子这里有两个容易漏的条件：**同花色**与**不能含字牌**。
+// 顺子这里有两个容易漏的条件：同花色与不能含字牌。
 // 只看 ts[1] == ts[0]+1 是不够的——9m 的编号是 8，加 1 就是 1s 的编号 9，
 // 而 27（东）加 1 会落到 28（南）。
 func validMeldShape(m Meld) error {
@@ -120,7 +120,7 @@ func validateDecomposition(t *testing.T, input []Tile, d Decomposition) {
 
 	switch d.Shape {
 	case ShapeKokushi:
-		// Decomposition 对国士**只带雀头**（那一对幺九），不带其余 12 张——
+		// Decomposition 对国士只带雀头（那一对幺九），不带其余 12 张——
 		// 所以这里做不了多重集比对，只能反过来验证输入确实是国士形。
 		if !bruteKokushi(want, len(input)) {
 			t.Errorf("拆法标记为国士，输入却不是国士形: %s", FormatTiles(input))
@@ -153,7 +153,7 @@ func validateDecomposition(t *testing.T, input []Tile, d Decomposition) {
 		}
 	}
 
-	// 牌不增不减。**这一步是健全性的核心**：抓"凭空造牌"和"吃掉牌"。
+	// 牌不增不减。这一步是健全性的核心：抓"凭空造牌"和"吃掉牌"。
 	got := mustCounts(t, d.Tiles())
 	if got != want {
 		t.Errorf("拆法的牌与输入不一致:\n输入 %s\n拆法 %s",
@@ -208,15 +208,15 @@ func bruteKokushi(c Counts, n int) bool {
 	return doubled == 1
 }
 
-// canWinBruteForce 是 §4.3 要求的**独立暴力实现**。
+// canWinBruteForce 是 §4.3 要求的独立暴力实现。
 //
 // 与 Decompose 的关键差别在顺子的枚举方式：
 //
-//	Decompose：拿到最小的那张牌，**只能把它当顺子的起点**
+//	Decompose：拿到最小的那张牌，只能把它当顺子的起点
 //	           （因为更小的位置已经空了，所以那个剪枝是对的）
-//	这里：    让最小的那张牌处在顺子的**任意位置**（起点 i-2 / i-1 / i）
+//	这里：    让最小的那张牌处在顺子的任意位置（起点 i-2 / i-1 / i）
 //
-// 这里**不依赖**上面那个剪枝论证，所以两者的失效位置不同：优化版剪枝写错会漏判，
+// 这里不依赖上面那个剪枝论证，所以两者的失效位置不同：优化版剪枝写错会漏判，
 // 这里枚举不全也会漏判，但漏的是不同的路径，能互相暴露。
 func canWinBruteForce(tiles []Tile) bool {
 	if len(tiles) < 2 || len(tiles)%3 != 2 {
@@ -245,7 +245,7 @@ func canWinBruteForce(tiles []Tile) bool {
 }
 
 // bruteRemoveMelds 不断取出任意一个合法面子，直到取空。
-// 每次都处理**当前最小**的那张牌，但允许它处在顺子的任意位置。
+// 每次都处理当前最小的那张牌，但允许它处在顺子的任意位置。
 func bruteRemoveMelds(c *Counts) bool {
 	i := -1
 	for k := 0; k < NumTileKinds; k++ {
@@ -356,7 +356,7 @@ func TestAcceptanceExhaustiveSingleSuit(t *testing.T) {
 
 // 跨花色边界域：7p 8p 9p 1z 2z 3z。
 //
-// 这个域专抓单花色域**抓不到**的东西：
+// 这个域专抓单花色域抓不到的东西：
 //   - 9p(26) 与 1z(27) 在编号上相邻，顺子绝不能跨过去
 //   - 含字牌，能验证"字牌不能组顺子"
 //   - 含 789p，能验证"顺子不能跨花色"
@@ -373,10 +373,10 @@ func TestAcceptanceExhaustiveSuitBoundary(t *testing.T) {
 
 // ── §3 构造法 ───────────────────────────────────────────────────────────
 
-// randomWinningHand 随机造 4 个面子 + 1 个雀头，结果**必然**是和牌型。
+// randomWinningHand 随机造 4 个面子 + 1 个雀头，结果必然是和牌型。
 //
-// 反向测试（拿一手牌问"能不能和"）有个根本缺陷：无法区分"不和"是**漏判**
-// 还是**本来就该不和**。构造法给的是确定的**正例**。
+// 反向测试（拿一手牌问"能不能和"）有个根本缺陷：无法区分"不和"是漏判
+// 还是本来就该不和。构造法给的是确定的正例。
 func randomWinningHand(r *rand.Rand) []Tile {
 	tiles := make([]Tile, 0, 14)
 	for i := 0; i < 4; i++ {
@@ -480,7 +480,7 @@ func TestAcceptanceConstructedHandsAlwaysWin(t *testing.T) {
 	}
 }
 
-// 构造法的反向：从和牌型里拿走一张，那张牌必须是**听牌张**。
+// 构造法的反向：从和牌型里拿走一张，那张牌必须是听牌张。
 func TestAcceptanceConstructedWaitsAreReal(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 8))
 	checked := 0
@@ -554,7 +554,7 @@ func TestAcceptanceFuInLegalSet(t *testing.T) {
 //
 //	go test ./internal/mahjong/ -run '^$' -fuzz FuzzCanWin -fuzztime 60s
 //
-// 不变量有两条：**不 panic**，以及与独立暴力实现**判定一致**。
+// 不变量有两条：不 panic，以及与独立暴力实现判定一致。
 func FuzzCanWin(f *testing.F) {
 	for _, s := range []string{
 		"123m456s789p11z", "1112345678999m", "11223344556677m",

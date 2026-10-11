@@ -9,11 +9,11 @@ import (
 
 // verify_test.go —— 牌山可验证性。协议见 docs/牌山可验证性.md。
 //
-// **期望值全部独立算**：这个文件不复用 verify.go 里的任何辅助函数，
+// 期望值全部独立算：这个文件不复用 verify.go 里的任何辅助函数，
 // 而是照文档 §3.1 的字节表用字面拼接重新实现一遍公式。
 //
-// 为什么必须这样：调实现去比对实现是同义反复——**多套一层哈希、少写一段
-// 域分隔串、把 roundIndex 截成 1 字节，这些错误它一个都抓不到。**
+// 为什么必须这样：调实现去比对实现是同义反复——多套一层哈希、少写一段
+// 域分隔串、把 roundIndex 截成 1 字节，这些错误它一个都抓不到。
 // 而这套机制的全部意义就是"第三方能独立复算"，所以测试本身就该是那个第三方。
 
 // ── 独立的规格实现（照抄文档，不看 verify.go）────────────────────────────
@@ -21,7 +21,7 @@ import (
 // specDomain 照抄文档 §3.3 的域分隔串。
 const specDomain = "majspirit/wall/v1"
 
-// specInt64 照文档：整数一律 8 字节 big-endian，**定宽**。
+// specInt64 照文档：整数一律 8 字节 big-endian，定宽。
 func specInt64(x int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(x))
@@ -73,7 +73,7 @@ func seedsFrom(b ...byte) [4][32]byte {
 
 // ── §3.1 字节表：长度是契约的一部分 ────────────────────────────────────
 
-// 这个测试只钉**文档里的字节数**，不碰实现内部的结构。
+// 这个测试只钉文档里的字节数，不碰实现内部的结构。
 // 实现有没有照做，由下面的公式比对负责。
 func TestWallVerifyDocumentedInputLayout(t *testing.T) {
 	seed := seedFrom(1, 2, 3)
@@ -94,7 +94,7 @@ func TestWallVerifyDocumentedInputLayout(t *testing.T) {
 	}
 }
 
-// ── 实现必须等于文档的公式 ★ 这条抓双重哈希 ────────────────────────────
+// ── 实现必须等于文档的公式：这条抓双重哈希 ────────────────────────────
 
 func TestWallVerifyMatchesDocumentedFormula(t *testing.T) {
 	seed := seedFrom(0x11, 0x22, 0x33)
@@ -224,7 +224,7 @@ func TestWallVerifyRoundIndexIsNotTruncated(t *testing.T) {
 	}
 }
 
-// ── 重放可复现（§11）★ 模拟玩家第 9 节的第 4 步 ────────────────────────
+// ── 重放可复现（§11）：模拟玩家第 9 节的第 4 步 ────────────────────────
 
 func TestWallVerifyReplayReproducesWall(t *testing.T) {
 	const gid = 20261004

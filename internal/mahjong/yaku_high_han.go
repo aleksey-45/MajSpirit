@@ -44,7 +44,7 @@ func (h *hand) detectTwo(hits *[]YakuHit) {
 	}
 }
 
-// concealedTripletCount 返回**暗刻**的个数。
+// concealedTripletCount 返回暗刻的个数。
 //
 // 荣和时「和牌那张组成的刻子算明刻」：和牌张不是雀头时，包含它的那个刻子在荣和时算明。
 func (h *hand) concealedTripletCount() int {
@@ -138,7 +138,7 @@ func (h *hand) isHonroutou() bool {
 	return allOf(h.tiles(), isYaochu)
 }
 
-// isChanta 判定混全带幺九：每个面子与雀头都含幺九牌，且**有字牌**。
+// isChanta 判定混全带幺九：每个面子与雀头都含幺九牌，且有字牌。
 // 无字牌的那种是纯全带幺九（见 isJunchan），两者互斥。
 func (h *hand) isChanta() bool {
 	if _, hasHonor := h.suitSet(); !hasHonor {

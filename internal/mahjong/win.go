@@ -9,7 +9,7 @@ type Counts [NumTileKinds]int
 
 // CountTiles 统计每种牌的张数，并校验非法牌与「同种超过 4 张」。
 //
-// **这是规则层唯一的入口**：Decompose / CanWin / Waits / 全部役种与符数都只读
+// 这是规则层唯一的入口：Decompose / CanWin / Waits / 全部役种与符数都只读
 // 返回值，所以赤宝牌在这里归一成种类之后，下游就再也见不到赤属性了。
 // 反过来说，这里漏掉 `.Kind()` 的后果是「手里有赤五万就判不出和牌形」。
 func CountTiles(tiles []Tile) (Counts, error) {
@@ -60,7 +60,7 @@ func (m Meld) NumTiles() int {
 // TilesUsed 返回这个面子实际占用的牌，长度由 Kind 决定。
 //
 // Tiles 是定长 [4]Tile，非杠面子的第 4 个元素是零值 Tile(0)——也就是「一万」。
-// 直接遍历整个数组会凭空多出一张一万，所以**一律走这个方法或 Tile()**。
+// 直接遍历整个数组会凭空多出一张一万，所以一律走这个方法或 Tile()。
 func (m Meld) TilesUsed() []Tile { return m.Tiles[:m.NumTiles()] }
 
 // Tile 返回代表这个面子的牌：顺子返回最小的一张，刻子/杠/对子返回那一张。
@@ -70,7 +70,7 @@ func (m Meld) Tile() Tile { return m.Tiles[0] }
 // 对对和、三暗刻、混老头这类判定关心的是这个，不区分杠。
 func (m Meld) IsTripletLike() bool { return m.Kind == MeldTriplet || m.Kind == MeldKan }
 
-// Shape 是拆法的形态。和牌形**只有三种**（docs/规则集.md §3.5）。
+// Shape 是拆法的形态。和牌形只有三种（docs/规则集.md §3.5）。
 type Shape uint8
 
 const (
@@ -91,7 +91,7 @@ type Decomposition struct {
 	Melds []Meld
 }
 
-// Tiles 返回这个拆法用到的全部牌（已排序），**不含副露**。
+// Tiles 返回这个拆法用到的全部牌（已排序），不含副露。
 func (d Decomposition) Tiles() []Tile {
 	tiles := []Tile{d.Pair, d.Pair}
 	for _, m := range d.Melds {
@@ -123,7 +123,7 @@ func (m Meld) IsQuad() bool {
 //
 // counts 是就地修改的，调用方负责回溯恢复；melds 是当前已经拆出的面子。
 //
-// 关键性质：取**编号最小**的那张剩余的牌，在任何一个合法拆法里它必然属于
+// 关键性质：取编号最小的那张剩余的牌，在任何一个合法拆法里它必然属于
 // ① 以它开头的顺子，或 ② 它自己的刻子，没有第三种可能。所以每层只试这两种归属。
 func dfs(decomps *[]Decomposition, counts *Counts, pair Tile, melds []Meld) {
 	i := 0
@@ -131,7 +131,7 @@ func dfs(decomps *[]Decomposition, counts *Counts, pair Tile, melds []Meld) {
 		i++
 	}
 	if i == NumTileKinds {
-		// 全部用完即是一种拆法。这里**不需要**再记一个面子计数：
+		// 全部用完即是一种拆法。这里不需要再记一个面子计数：
 		// 进来是 3k+2 张，拿走雀头后剩 3k，之后每步恰好减 3，减到 0 时必然正好 k 个面子。
 		// 所以同一套逻辑覆盖 14 / 11 / 8 / 5 / 2 张（对应 0 到 4 个副露）的全部情况。
 		*decomps = append(*decomps, Decomposition{ // 必须拷贝
@@ -168,13 +168,13 @@ func dfs(decomps *[]Decomposition, counts *Counts, pair Tile, melds []Meld) {
 	}
 }
 
-// Decompose 返回**全部**普通和牌型的拆法，而不是任意一种。
+// Decompose 返回全部普通和牌型的拆法，而不是任意一种。
 //
-// tiles 只需包含**暗牌**：有 M 个副露时它是 14-3M 张，张数本身就决定了要拆出几个面子，
+// tiles 只需包含暗牌：有 M 个副露时它是 14-3M 张，张数本身就决定了要拆出几个面子，
 // 所以本函数不需要知道副露有几个。杠不参与拆解——杠是"摆到边上 + 补一张岭上牌"，
 // 手上少 3 张，与碰完全等价，MeldKan 只应出现在副露列表里。
 //
-// 七对子与国士无双**也在返回值中**（见 Shape）——DetectYaku 只拿到 Decomposition，
+// 七对子与国士无双也在返回值中（见 Shape）——DetectYaku 只拿到 Decomposition，
 // 不产出它们的话，七对子这个 2 翻役永远判不出来。
 func Decompose(tiles []Tile) ([]Decomposition, error) {
 	n := len(tiles)
@@ -213,7 +213,7 @@ func Decompose(tiles []Tile) ([]Decomposition, error) {
 
 // chiitoitsuDecomposition 构造七对子的拆法。
 //
-// 表示方式与标准型保持一致：Pair 是其中一对，Melds 是**另外 6 对**（合计 7 对）。
+// 表示方式与标准型保持一致：Pair 是其中一对，Melds 是另外 6 对（合计 7 对）。
 // 这样 Decomposition.Tiles() 这类"全部牌"的操作对三种形态一视同仁。
 func chiitoitsuDecomposition(counts *Counts) (Decomposition, bool) {
 	if !isChiitoitsu(counts) {
@@ -272,8 +272,8 @@ func isKokushi(counts *Counts) bool {
 	return pairs == 1
 }
 
-// isChiitoitsu 判定七对子：七个**不同种类**的对子。
-// 同种四张**不算**两个对子，所以这里不能用"对子数 = 总数/2"来判。
+// isChiitoitsu 判定七对子：七个不同种类的对子。
+// 同种四张不算两个对子，所以这里不能用"对子数 = 总数/2"来判。
 func isChiitoitsu(counts *Counts) bool {
 	pairs := 0
 	for _, c := range counts {
@@ -290,7 +290,7 @@ func isChiitoitsu(counts *Counts) bool {
 
 // CanWin 报告牌型是否是合法和牌型（普通型 / 七对子 / 国士无双）。
 //
-// 只回答"形状"。它**不回答"有没有役"，也不回答"是不是振听"**——那两个条件由房间层
+// 只回答"形状"。它不回答"有没有役"，也不回答"是不是振听"——那两个条件由房间层
 // 另行判定，见 docs/规则集.md §2。
 func CanWin(tiles []Tile) bool {
 	n := len(tiles)

@@ -3,9 +3,9 @@ package mahjong
 // yaku.go —— 役种判定的对外接口：类型、役种表、DetectYaku。
 // 役种定义。规则与翻数一律以 docs/规则集.md §3 为准。
 //
-// HanOpen 为 -1 表示**门清限定**——副露后完全不成立，不是降翻。
+// HanOpen 为 -1 表示门清限定——副露后完全不成立，不是降翻。
 //
-// M-League 与多数平台的差异已写进下面的表：单役种**没有双倍役满**
+// M-League 与多数平台的差异已写进下面的表：单役种没有双倍役满
 // （四暗刻单骑、国士十三面、纯正九莲、大四喜、四槓子都是 1 倍）；
 // 没有流し満貫与人和；绿一色不要求含发。
 type Yaku struct {
@@ -26,9 +26,9 @@ type YakuHit struct {
 // YakuContext 是判定役种所需的全部外部信息。
 type YakuContext struct {
 	WinningTile Tile   // 和牌的那张。平和需要它判两面听；三暗刻/四暗刻需要它判明暗
-	Melds       []Meld // **已副露**的面子（含杠）。暗牌拆出来的面子在 Decomposition 里
+	Melds       []Meld // 已副露的面子（含杠）。暗牌拆出来的面子在 Decomposition 里
 
-	IsMenzen  bool // 门清（**暗杠不影响门清**）
+	IsMenzen  bool // 门清（暗杠不影响门清）
 	IsTsumo   bool // 自摸
 	IsRiichi  bool // 立直
 	IsIppatsu bool // 一发
@@ -110,12 +110,12 @@ func (y Yaku) han(menzen bool) int {
 
 // normalized 返回把赤宝牌归一成普通牌之后的 context。
 //
-// **规则判定只认种类**：赤五万必须表现得和五万一模一样，否则「碰了赤五万」会在
+// 规则判定只认种类：赤五万必须表现得和五万一模一样，否则「碰了赤五万」会在
 // 三色同顺、役牌、三暗刻这些地方判错。但调用方（房间层）还要保留赤属性来数赤宝牌
-// 翻数，所以归一**只在规则层内部做**——`YakuContext` 是按值传递的，
+// 翻数，所以归一只在规则层内部做——`YakuContext` 是按值传递的，
 // `DetectYaku` / `CalcFu` 改的是自己的副本，调用方拿到的仍是原始牌。
 //
-// 放在这两个入口而不是让调用方自觉，是因为漏掉的症状是**静默**的：
+// 放在这两个入口而不是让调用方自觉，是因为漏掉的症状是静默的：
 // 荣和赤五万补成刻子时少算一组明刻符，多算一组暗刻符，还顺便让三暗刻错误成立。
 // 赤宝牌好坑啊
 func (ctx YakuContext) normalized() YakuContext {
@@ -134,13 +134,13 @@ func (ctx YakuContext) normalized() YakuContext {
 	return ctx
 }
 
-// DetectYaku 返回**命中的全部役种**，而不是最高分的那个——多个役可以叠加，总翻数是求和。
+// DetectYaku 返回命中的全部役种，而不是最高分的那个——多个役可以叠加，总翻数是求和。
 //
-// 返回空切片表示**无役**，上层据此判定「不能和牌」。
+// 返回空切片表示无役，上层据此判定「不能和牌」。
 //
 // 两条容易搞错的规则：
-//   - **宝牌不在这里。** 宝牌不是役，在点数换算时才加。放进来会导致「只有宝牌也能和牌」。
-//   - **役满优先。** 只要命中役满，就不再返回普通役。
+//   - 宝牌不在这里。 宝牌不是役，在点数换算时才加。放进来会导致「只有宝牌也能和牌」。
+//   - 役满优先。 只要命中役满，就不再返回普通役。
 func DetectYaku(d Decomposition, ctx YakuContext) []YakuHit {
 	h := newHand(d, ctx.normalized())
 

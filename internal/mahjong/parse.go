@@ -68,7 +68,7 @@ func MustParseTiles(s string) []Tile {
 
 // FormatTiles 把牌组格式化为紧凑记法，与 ParseTiles 互为逆运算。
 // 输出按万、条、饼、字牌分组，组内按点数升序，例如 "123m456s789p11z"。
-// 赤宝牌写作 `0`，且排在同点数的普通牌**之前**，例如 "055m"。
+// 赤宝牌写作 `0`，且排在同点数的普通牌之前，例如 "055m"。
 // 非法牌会被跳过：本函数同时用于日志与调试输出，不该因为一张坏牌就 panic。
 func FormatTiles(tiles []Tile) string {
 	var b strings.Builder
@@ -83,7 +83,7 @@ func FormatTiles(tiles []Tile) string {
 		if len(group) == 0 {
 			continue
 		}
-		// 按**种类**排序：赤五万要排在五万的位置上，而不是因为编号 34 掉到队尾。
+		// 按种类排序：赤五万要排在五万的位置上，而不是因为编号 34 掉到队尾。
 		// 同种类时赤牌在前（编号更大），和 "055m" 的写法一致。
 		slices.SortFunc(group, func(a, b Tile) int {
 			if c := cmp.Compare(a.Kind(), b.Kind()); c != 0 {

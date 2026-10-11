@@ -3,7 +3,7 @@ package mahjong
 import "testing"
 
 // 本文件补齐 yaku_test.go 没覆盖到的役：二翻、三翻及六翻，以及其余役满。
-// 仍然只用**拆法唯一**的手牌（judge 会强制这一点）。
+// 仍然只用拆法唯一的手牌（judge 会强制这一点）。
 
 // openKan 构造一个副露的杠。
 func openKan(t Tile) Meld {
@@ -135,7 +135,7 @@ func TestChantaVsJunchan(t *testing.T) {
 
 // ── 三翻及六翻 ──────────────────────────────────────────────────────────
 
-// 二杯口与一杯口**不叠加**：两对同型顺子只算二杯口 3 翻。
+// 二杯口与一杯口不叠加：两对同型顺子只算二杯口 3 翻。
 func TestRyanpeikouExcludesIipeikou(t *testing.T) {
 	ctx := menzen()
 	ctx.WinningTile = MustTile(SuitPin, 5)

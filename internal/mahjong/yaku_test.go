@@ -6,7 +6,7 @@ import (
 
 // ── 测试辅助 ────────────────────────────────────────────────────────────
 //
-// 役种测试必须用**拆法唯一**的手牌。多解的手牌会让断言变成"运气"——
+// 役种测试必须用拆法唯一的手牌。多解的手牌会让断言变成"运气"——
 // 同一个牌型的不同拆法可能命中不同的役，这正是 Decompose 要返回全部拆法的原因。
 
 func judge(t *testing.T, hand string, ctx YakuContext) []YakuHit {
@@ -75,12 +75,12 @@ func openRun(start Tile) Meld {
 
 // ── 回归测试：先前修掉的 5 个 bug ────────────────────────────────────────
 
-// bug ①：役牌看的是**刻子**，不是雀头。
+// bug ①：役牌看的是刻子，不是雀头。
 //
 // 雀头是场风/自风只给 2 符（连风牌雀头），不构成役。
 // 旧实现比较的是 d.Pair，会把下面这手牌判成有役。
 func TestYakuhaiIsTripletNotPair(t *testing.T) {
-	// 东雀头 + 三组万顺（**注意不能凑齐 1-9，否则是一气通贯**）+ 一筒顺。
+	// 东雀头 + 三组万顺（注意不能凑齐 1-9，否则是一气通贯）+ 一筒顺。
 	// 东是场风也是自风，但只作雀头。
 	hits := judge(t, "123m456m789s234p11z", menzen())
 	if len(hits) != 0 {
@@ -88,7 +88,7 @@ func TestYakuhaiIsTripletNotPair(t *testing.T) {
 	}
 }
 
-// bug ③：岭上开花 / 抢杠 / 海底摸月 / 河底捞鱼 **副露也成立**，不是门清限定。
+// bug ③：岭上开花 / 抢杠 / 海底摸月 / 河底捞鱼 副露也成立，不是门清限定。
 // 旧实现给了 HanOpen = -1。下面用有副露的手牌逐一验证。
 func TestIncidentalYakuSurviveMelds(t *testing.T) {
 	const hand = "234m567m789s11p" // 11 张 = 3 面子 + 雀头，另有 1 个副露
@@ -162,7 +162,7 @@ func TestTanyaoRejectsHonorTriplets(t *testing.T) {
 	}
 }
 
-// bug 修正：平和要求**两面听**，且雀头**非役牌**——但不能简单排除所有字牌。
+// bug 修正：平和要求两面听，且雀头非役牌——但不能简单排除所有字牌。
 func TestPinfu(t *testing.T) {
 	t.Run("两面听成立", func(t *testing.T) {
 		// 234s 听 2s：手里是 3s4s，听 2s 或 5s → 两面
@@ -215,7 +215,7 @@ func TestPinfu(t *testing.T) {
 
 // ── 门清限定与降翻两列 ──────────────────────────────────────────────────
 
-// 门清限定役在副露后**完全不成立**，不是降翻。
+// 门清限定役在副露后完全不成立，不是降翻。
 func TestMenzenLimitedYakuVanishWhenOpen(t *testing.T) {
 	const hand = "234m567m789s11p" // 11 张暗牌
 	open := YakuContext{
@@ -269,7 +269,7 @@ func TestKuisagariHanColumns(t *testing.T) {
 	}
 }
 
-// 连风牌（场风 == 自风）时两个役牌役**都成立**，共 2 翻。
+// 连风牌（场风 == 自风）时两个役牌役都成立，共 2 翻。
 func TestDoubleWindYakuhai(t *testing.T) {
 	hits := judge(t, "111z234m456m789s22p", menzen()) // 东刻子，东场东家
 
@@ -284,7 +284,7 @@ func TestDoubleWindYakuhai(t *testing.T) {
 // ── 无役 / 役满优先 / 单役种没有双倍 ────────────────────────────────────
 
 func TestNoYakuReturnsEmpty(t *testing.T) {
-	// 全顺子但**单骑听**（不是两面）→ 不成立平和；
+	// 全顺子但单骑听（不是两面）→ 不成立平和；
 	// 也没有断幺九（含 1m / 东），没有一气通贯（万只到 456）
 	ctx := menzen()
 	ctx.WinningTile = MustTile(SuitHonor, HonorNorth)
@@ -295,7 +295,7 @@ func TestNoYakuReturnsEmpty(t *testing.T) {
 	}
 }
 
-// 命中役满时**不再返回普通役**——役满的翻数与符数都不参与计算。
+// 命中役满时不再返回普通役——役满的翻数与符数都不参与计算。
 func TestYakumanSuppressesNormalYaku(t *testing.T) {
 	// 白発中三组刻子 + 234m + 东雀头
 	hits := judge(t, "555z666z777z234m11z", menzen())
@@ -313,7 +313,7 @@ func TestYakumanSuppressesNormalYaku(t *testing.T) {
 	}
 }
 
-// M-League：**单役种没有双倍役满**。国士十三面、四暗刻单骑一律 1 倍；
+// M-League：单役种没有双倍役满。国士十三面、四暗刻单骑一律 1 倍；
 // 倍数只能来自复合（见 docs/规则集.md §3.4）。
 func TestSingleYakumanIsOneMultiplier(t *testing.T) {
 	tests := []struct {
@@ -347,7 +347,7 @@ func TestSingleYakumanIsOneMultiplier(t *testing.T) {
 // 役满之间可以复合，按个数倍算。
 func TestYakumanCompounds(t *testing.T) {
 	// 白発中三组刻子 + 东刻子 + 南雀头，而且四组全是暗刻、雀头单骑：
-	// 大三元 + 字一色 + **四暗刻** = 3 倍役满
+	// 大三元 + 字一色 + 四暗刻 = 3 倍役满
 	hits := judge(t, "555z666z777z111z22z", menzen())
 
 	for _, name := range []string{"大三元", "字一色", "四暗刻"} {
@@ -367,7 +367,7 @@ func TestYakumanCompounds(t *testing.T) {
 // ── M-League 特有：绿一色不要求含发 ─────────────────────────────────────
 
 func TestRyuuiisouWithoutHatsu(t *testing.T) {
-	// 只由 2/3/4/6/8 索构成，**不含发**
+	// 只由 2/3/4/6/8 索构成，不含发
 	hits := judge(t, "234s234s666s888s22s", menzen())
 
 	if !has(hits, "绿一色") {
