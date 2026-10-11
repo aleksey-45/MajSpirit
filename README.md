@@ -64,12 +64,17 @@
 # 编译全部包
 go build ./...
 
-# 运行全部测试
-go test ./...
+# 运行全部测试（-p 1 必须有，理由见下）
+go test -p 1 ./...
 
 # 查看可用命令
 make help
 ```
+
+> **`-p 1` 不是可选的。** `internal/store` 的用例会 `DROP SCHEMA`，而
+> `cmd/server` 的集成测试在同一个库上跑迁移；两个包并行时，前者会插在后者的
+> 两条迁移中间（实测报「关系 users 不存在」）。`make test` / `make test-db`
+> 已经带上了这个开关。这是测试夹具的性质，生产不受影响。
 
 其他常用命令：`make vet`（静态检查）、`make build`（产出二进制）、`make lint`（staticcheck）。
 
