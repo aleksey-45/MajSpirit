@@ -21,7 +21,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aleksey-45/majspirit/internal/api"
+	"github.com/aleksey-45/majspirit/internal/auth"
 	"github.com/aleksey-45/majspirit/internal/store"
+	"github.com/aleksey-45/majspirit/internal/user"
 )
 
 // defaultTokenTTL 是登录令牌的有效期。
@@ -109,9 +112,9 @@ func run(ctx context.Context, cfg config) error {
 	}
 	slog.Info("数据库已就绪")
 
-	// ③ 路由。目前只有一个健康检查，§2.4 会在这里挂上 /api/。
+	// ③ 路由。
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		// 健康检查要连数据库一起探：进程活着但连不上库，
 		// 对负载均衡来说和死了没区别，不该报 200。
 		if err := pool.Ping(r.Context()); err != nil {
@@ -121,6 +124,13 @@ func run(ctx context.Context, cfg config) error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
+	// ④ 用户系统与 /api/*。
+	//
+	// 依赖在这里组装：pool 满足 user.Repo（结构化类型，不需要它知道），
+	// revoker 建一次、由 Logout 与 Authenticate 共用。
+	svc := user.New(pool, cfg.JWTSecret, cfg.TokenTTL, auth.NewRevoker())
+	mux.Handle("/api/", api.NewRouter(svc))
+
 	srv := &http.Server{
 		Handler: mux,
 		// 不设它的话，一个只发半个请求头的连接就能占住一个 goroutine 不放手
@@ -128,7 +138,7 @@ func run(ctx context.Context, cfg config) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	// ④ 先同步把端口绑上，成功了再打日志、再在后台服务。
+	// ⑤ 先同步把端口绑上，成功了再打日志、再在后台服务。
 	//
 	// 这里刻意不用 srv.ListenAndServe()：它把"绑定"和"开工"揉在一起，
 	// 于是"已启动"那句日志只能写在它前面——而那时候还没绑上。
@@ -142,7 +152,7 @@ func run(ctx context.Context, cfg config) error {
 		return fmt.Errorf("监听 %s: %w", cfg.Addr, err)
 	}
 
-	// ⑤ Serve 会阻塞，所以放 goroutine；主流程在下面等信号。
+	// ⑥ Serve 会阻塞，所以放 goroutine；主流程在下面等信号。
 	errc := make(chan error, 1) // 缓冲 1：即使没人来得及接收，那个 goroutine 也不会卡住
 	go func() {
 		err := srv.Serve(ln)
@@ -155,7 +165,7 @@ func run(ctx context.Context, cfg config) error {
 	}()
 	slog.Info("HTTP 服务已启动", "addr", ln.Addr().String())
 
-	// ⑥ 等两件事之一：收到退出信号，或者服务自己挂了。
+	// ⑦ 等两件事之一：收到退出信号，或者服务自己挂了。
 	select {
 	case <-ctx.Done():
 		slog.Info("收到退出信号，开始优雅关闭")
@@ -166,7 +176,7 @@ func run(ctx context.Context, cfg config) error {
 		return nil
 	}
 
-	// ⑦ 优雅关闭：停止接受新连接，给正在处理的请求留 10 秒。
+	// ⑧ 优雅关闭：停止接受新连接，给正在处理的请求留 10 秒。
 	//
 	// 这里不能直接用 ctx——它此刻已经被取消了，基于它派生超时会立刻到期，
 	// Shutdown 会马上返回，等于没等。所以用 WithoutCancel 剥掉取消状态、只保留值，
