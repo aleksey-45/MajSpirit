@@ -1,4 +1,4 @@
-.PHONY: help build run test test-db test-cover vet fmt lint tidy clean
+.PHONY: help build run test test-db test-race test-cover vet fmt lint tidy clean
 
 BINARY := bin/majspirit
 PKGS   := ./...
@@ -33,6 +33,11 @@ test: ## 运行全部测试（需要数据库的用例会自动跳过）
 test-db: ## 连上真库跑全部测试（读 .env；-count=1 绕过测试缓存）
 	@test -f .env || { echo "没有 .env —— 先照 .env.example 建一个"; exit 1; }
 	set -a; . ./.env; set +a; $(GOTEST) -count=1 $(PKGS)
+
+# CGO_ENABLED=1 在 Windows 上必须显式给：默认是 0，race detector 是 C 运行时
+# 实现的，不给就报 "-race requires cgo"。C 编译器见 AGENTS.md 的环境一节。
+test-race: ## 带竞态检测跑全仓测试
+	CGO_ENABLED=1 $(GOTEST) -race $(PKGS)
 
 test-cover: ## 运行测试并输出覆盖率
 	$(GOTEST) -cover $(PKGS)
