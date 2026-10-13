@@ -17,9 +17,12 @@ import (
 )
 
 const (
-	// 不读的客户端会填满发送缓冲区，此后 Write 一直阻塞。
-	// 库的写超时只让这次写失败（setupWriteTimeout 不关连接，跟读超时相反），
-	// 所以失败后由我们关连接。
+	// 不读的客户端会填满发送缓冲区，此后 Write 一直阻塞，只有超时能收场。
+	//
+	// 写超时到期时**库已经把整条连接关掉了**：write.go:321 每写一帧就注册一次
+	// setupWriteTimeout，它的 AfterFunc 里是 c.close()，而 close() 会关掉底层 socket。
+	// 所以这一次写失败之后没有任何地方能再写关闭帧——那条路径上 code 一律传 0，
+	// 客户端只看到 EOF。别指望"写超时之后再补发一条 4408"。
 	writeTimeout = 10 * time.Second
 
 	sendTimeout = 10 * time.Second
