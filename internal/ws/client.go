@@ -25,8 +25,6 @@ const (
 	// 客户端只看到 EOF。别指望"写超时之后再补发一条 4408"。
 	writeTimeout = 10 * time.Second
 
-	sendTimeout = 10 * time.Second
-
 	// Close 等"写 goroutine 处理完关闭"的上限，超过就硬断。
 	closeWait = 2 * time.Second
 
@@ -97,20 +95,36 @@ func (c *Client) startWriter(ctx context.Context) {
 	go c.writeLoop(ctx)
 }
 
-// Send 把一条消息交给写 goroutine。满了不丢弃也不无限等：
-// 静默丢一条会让客户端的 seq 出现看不见的洞（协议 §1.4），
-// 无限等会拖住投递方。
+// ErrSlowConsumer 表示这条连接的发送队列已经满了：写 goroutine 消费不过来。
+//
+// 它不是"网络抖了一下"，而是"对端已经不读了"—— 队列里是 32 条小消息（几 KB），
+// 任何还活着的连接都是瞬间排空。真正的死活判定仍然归心跳（协议 §4.3）。
+var ErrSlowConsumer = errors.New("ws: 对端消费不过来")
+
+// Send 把一条消息交给写 goroutine，**投递方绝不等待**。
+//
+// 为什么不等：调用方是房间的广播循环，而那个 goroutine 是全房间唯一的。
+// 为了一条卡住的连接等几秒，等于让另外三家一起等 —— 最慢的那条连接会变成
+// 全场节拍器。这是 TCP 语义的直接后果（对端不读则写阻塞），只能在这一层切掉。
+//
+// 队列满时返回 ErrSlowConsumer，消息**不投递**。这不是"可以随便丢"的许可：
+// 协议有 seq + game.sync（§1.4、§4.4），收不到的那条会以"序号有洞"的形式
+// 被客户端发现，它自己会拉一份全量快照；麻将每条事件也都描述"刚才发生了什么"，
+// 能从快照重建。丢弃对客户端是**可见的**，这才让它可接受。
 func (c *Client) Send(env Envelope) error {
-	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
-	defer cancel()
+	// 先确定地看一眼关闭状态。少了这一步，done 已关而队列恰好有位时，
+	// select 会随机挑中入队那一支并返回 nil —— 消息永远发不出去，还报成功。
+	select {
+	case <-c.done:
+		return net.ErrClosed
+	default:
+	}
 
 	select {
 	case c.send <- env:
 		return nil
-	case <-c.done:
-		return net.ErrClosed
-	case <-ctx.Done():
-		return fmt.Errorf("发送 %s: 对端消费不过来: %w", env.Type, ctx.Err())
+	default:
+		return fmt.Errorf("发送 %s: %w", env.Type, ErrSlowConsumer)
 	}
 }
 
@@ -395,7 +409,10 @@ func (c *Client) heartbeat(ctx context.Context) {
 				Type: EventPing,
 				Data: mustJSON(pingEvent{ServerTime: time.Now().UnixMilli()}),
 			}); err != nil {
-				return // 连接已经在关了
+				// 两种原因都不用在这里补刀：连接已关时没什么可做的；
+				// 队列满则意味着写 goroutine 正卡在一次写里，它自己的写超时
+				// （writeTimeout）会把整条连接关掉。心跳只负责发现"对端不回话"。
+				return
 			}
 
 			select {

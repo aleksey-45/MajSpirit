@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -91,30 +92,32 @@ func TestRegistryConcurrent(t *testing.T) {
 
 // TestRegistrySlowClientDoesNotBlockOthers 守住"一个慢客户端不拖住其他人"。
 //
-// Send 拿锁只为了取指针、发送在锁外做。如果发送在锁里，一个消费不过来的
-// 客户端会把它之后**所有用户**的消息都堵在注册表上 —— 阶段四的表现是
-// "一个人网卡，整局四个人的事件都不动了"。
-//
-// 这条测试是补出来的：原先三条注册表用例都抓不到"在锁里发送"，
-// 因为没有一条造出"真的卡住的 Send"。
+// 这条测试换过一次靶子，值得记下来：它原来防的是「在锁里发送」—— 那时 Send 会
+// 阻塞，锁一拿就是全网停摆。Send 改成非阻塞之后那个风险从根上消失了，
+// 所以它现在防的是**退化成阻塞**：队列满了必须立刻返回 ErrSlowConsumer，
+// 而不是等上几秒（阶段四房间里那个唯一的 goroutine 会被它拖住）。
 func TestRegistrySlowClientDoesNotBlockOthers(t *testing.T) {
 	r := NewRegistry()
 	slow, fast := fakeClient(), fakeClient()
 	r.Add(user.User{ID: 1}, slow)
 	r.Add(user.User{ID: 2}, fast)
 
-	// 灌满 slow 的写队列，且不起写 goroutine → 它的 Send 会一直阻塞。
+	// 灌满 slow 的写队列，且不起写 goroutine。
 	for range cap(slow.send) {
 		slow.send <- Envelope{Type: EventHello}
 	}
 
-	blocked := make(chan struct{})
-	go func() {
-		_ = r.Send(1, Envelope{Type: EventHello})
-		close(blocked)
-	}()
-	// 等它真的进到 Send 里面（否则测不到锁竞争）。
-	time.Sleep(50 * time.Millisecond)
+	slowErr := make(chan error, 1)
+	go func() { slowErr <- r.Send(1, Envelope{Type: EventHello}) }()
+
+	select {
+	case err := <-slowErr:
+		if !errors.Is(err, ErrSlowConsumer) {
+			t.Errorf("队列满时应返回 ErrSlowConsumer, 实际 %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("队列满了却阻塞住 —— 房间那个唯一的 goroutine 会被一个不读的对端拖垮")
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- r.Send(2, Envelope{Type: EventHello}) }()
@@ -125,9 +128,6 @@ func TestRegistrySlowClientDoesNotBlockOthers(t *testing.T) {
 			t.Errorf("给另一个用户发消息失败: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("一个慢客户端把别人的消息堵住了 —— Send 大概是在锁里做的")
+		t.Fatal("一个慢客户端把别人的消息堵住了")
 	}
-
-	close(slow.done) // 放掉卡住的那个 Send
-	<-blocked
 }
