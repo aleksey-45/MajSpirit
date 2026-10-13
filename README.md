@@ -281,12 +281,13 @@ docs: 补充规则层与房间层的依赖说明
 - [x] `internal/mahjong` 第三批：和牌型判定（标准型 / 七对子 / 国士无双）+ 测试
 - [x] `internal/mahjong` 第四批：役种判定（全部役种的成立条件与门清/副露翻数）
 - [x] `internal/mahjong` 第五批：符数计算与点数换算（含满贯封顶、切上满贯）
-      —— 四张速查表 + 官方复合役满算例全部进测试，覆盖率 98.5%
+      —— 四张速查表 + 官方复合役满算例全部进测试
 - [x] `internal/mahjong` 第六批：宝牌（指示牌映射、表/里/赤计数）
-- [ ] `internal/mahjong` 第七批：鸣牌（吃/碰/杠）与立直的成立判定
-      —— 先要补 `Waits` / `IsTenpai`（振听、听牌料、立直合法性三处都依赖它），
-      以及把「和牌形 → 役 → 宝牌 → 符 → 点数」串成 ①–⑨ 的入口
-- [ ] `internal/mahjong` 第八批：牌山可验证性（commit-reveal 与重放核验）
+- [x] `internal/mahjong` 第七批：听牌判定（`Waits` / `IsTenpai`）、鸣牌与立直的成立判定、
+      把「和牌形 → 有役 → 非振听 → 役 → 宝牌 → 符 → 点数」串成 ①–⑨ 的入口 `Win`
+      —— 规则集 §12 的六个算例端到端进测试，另有荒牌流局的听牌料。
+      **规则层至此完整**，包覆盖率 99.1%
+- [x] `internal/mahjong` 第八批：牌山可验证性（commit-reveal 与重放核验，`verify.go`）
 - [x] `internal/auth` + `internal/user` + `internal/store`：用户系统（§2）
       —— 端到端实测过 201 / 409 / 400 / 200 / 401 / 204 / 405
 - [x] `internal/ws`：WebSocket 连接与协议（§3）
