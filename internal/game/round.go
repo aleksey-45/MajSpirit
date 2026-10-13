@@ -106,9 +106,8 @@ func (g *Game) doDiscard(userID int64, t mahjong.Tile) error {
 		Remaining: g.wall.Remaining(),
 	}})
 
-	// 荣和窗口在下一片接进来；现在这张牌没人能鸣，直接过给下家。
-	g.turn = (g.turn + 1) % 4
-	g.draw()
+	// 打完就开鸣牌窗口：有人能荣和就等，没人能就轮到下家（claim.go）。
+	g.openClaimWindow(seat, t)
 	return nil
 }
 
@@ -117,6 +116,17 @@ func (g *Game) doWin(userID int64) error {
 	if seat < 0 {
 		return ErrNotInGame
 	}
+
+	// 有窗口就是**荣和**：这个人得是有资格的座位之一，和牌张是别人刚打的那张。
+	if g.claim != nil {
+		if !g.claim.answers(seat) {
+			return ErrNoWin
+		}
+		g.claimRon(seat)
+		return nil
+	}
+
+	// 没有窗口就是**自摸**：必须轮到自己、而且已经摸过牌。
 	if seat != g.turn || !g.drawn {
 		return ErrNotYourTurn
 	}

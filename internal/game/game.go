@@ -24,6 +24,9 @@ const (
 	// 服务端等满 35 秒才裁定。把读秒也塞进 deadlineMs 会让前端画不出读秒条。
 	defaultTurnBase  = 5 * time.Second
 	defaultTurnLimit = 35 * time.Second
+
+	// 鸣牌窗口（协议 §9.1）：3 秒，没有读秒。
+	defaultClaimLimit = 3 * time.Second
 )
 
 // Player 是座位上的玩家。Game 只要"座位 → 用户"这一个映射，不碰连接。
@@ -34,10 +37,11 @@ type Player struct {
 
 // Options 是开一场需要的参数。
 type Options struct {
-	Rounds    int           // 一场打几小局，0 表示 4
-	TurnBase  time.Duration // 下发给客户端的 deadlineMs 只算这一截
-	TurnLimit time.Duration // 服务端等满它才裁定
-	GameID    int64
+	Rounds     int           // 一场打几小局，0 表示 4
+	TurnBase   time.Duration // 下发给客户端的 deadlineMs 只算这一截
+	TurnLimit  time.Duration // 服务端等满它才裁定
+	ClaimLimit time.Duration // 鸣牌窗口；到点没回答的算过
+	GameID     int64
 	// Seed 为 nil 时用 crypto/rand 取服务器种子（赛后要公布它给人复算）。
 	Seed *[32]byte
 
@@ -84,6 +88,8 @@ type Game struct {
 	lastDrawn mahjong.Tile
 
 	deadline time.Time
+	// claim 非 nil 表示正在等鸣牌回应。此时 deadline 是**窗口**的截止时刻。
+	claim *claim
 }
 
 // New 开一场并起它的 goroutine。
@@ -96,6 +102,9 @@ func New(players [4]Player, notify Notifier, opt Options, log *slog.Logger) *Gam
 	}
 	if opt.TurnLimit == 0 {
 		opt.TurnLimit = defaultTurnLimit
+	}
+	if opt.ClaimLimit == 0 {
+		opt.ClaimLimit = defaultClaimLimit
 	}
 	if log == nil {
 		log = slog.Default()
@@ -140,7 +149,12 @@ func (g *Game) run() {
 			}
 			g.handle(c)
 		case <-expired:
-			g.onTurnTimeout()
+			// 两类等待共用这一个字段：正在等鸣牌就是窗口到期，否则是回合到期。
+			if g.claim != nil {
+				g.onClaimTimeout()
+			} else {
+				g.onTurnTimeout()
+			}
 		case <-g.closing:
 			return
 		}
@@ -158,6 +172,13 @@ func (g *Game) Discard(userID int64, t mahjong.Tile) error {
 // （协议 §5.3）—— 玩家不需要知道自己在做什么分类。
 func (g *Game) DeclareWin(userID int64) error {
 	return g.call(command{kind: cmdWin, id: userID})
+}
+
+// Pass 是 game.pass：放弃这次鸣牌机会（协议 §5.3）。
+//
+// 没有窗口时报错没有意义 —— 客户端可能慢一步发，那不算错。
+func (g *Game) Pass(userID int64) error {
+	return g.call(command{kind: cmdPass, id: userID})
 }
 
 // Close 停掉这一场并等 goroutine 退出。可以重复调用。
@@ -191,6 +212,7 @@ type cmdKind uint8
 const (
 	cmdDiscard cmdKind = iota
 	cmdWin
+	cmdPass
 )
 
 type command struct {
@@ -207,6 +229,8 @@ func (g *Game) handle(c command) {
 		err = g.doDiscard(c.id, c.tile)
 	case cmdWin:
 		err = g.doWin(c.id)
+	case cmdPass:
+		err = g.doPass(c.id)
 	}
 	c.reply <- err
 }

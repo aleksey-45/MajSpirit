@@ -52,6 +52,27 @@ type gameWinDeclaredView struct {
 	IsTsumo     bool   `json:"isTsumo"`
 }
 
+// gameClaimWindowView 只推给**有资格回应**的座位（协议 §6.6 / §7.3 第 2 条）。
+//
+// 窗口内容本身四家一样，所以走 `data` 而不是 `forSeat` —— 被裁的是**收件人名单**，
+// 不是内容。名单本身就是隐私："某人收到了 options"这件事暴露了他可能有和牌机会。
+type gameClaimWindowView struct {
+	Trigger    string   `json:"trigger"` // discard / kan
+	FromSeat   int      `json:"fromSeat"`
+	Tile       string   `json:"tile"`
+	Options    []string `json:"options"`
+	DeadlineMs int64    `json:"deadlineMs"`
+}
+
+// gameClaimClosedView 窗口关掉了。`resolvedBy` 为 null 表示四家都过（或超时）。
+//
+// 没人鸣时 `seat` 没有意义，取值 -1。
+type gameClaimClosedView struct {
+	Trigger    string `json:"trigger"`
+	ResolvedBy any    `json:"resolvedBy"`
+	Seat       int    `json:"seat"`
+}
+
 // gameRoundEndView 是一局结束。和了与流局共用它，靠 `endedBy` 区分。
 type gameRoundEndView struct {
 	RoundIndex    int              `json:"roundIndex"`

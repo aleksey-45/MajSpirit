@@ -102,6 +102,9 @@ func newTestGame(t *testing.T, opt Options) (*Game, *fakeNotifier) {
 	if opt.TurnLimit == 0 {
 		opt.TurnLimit = time.Second
 	}
+	if opt.ClaimLimit == 0 {
+		opt.ClaimLimit = time.Second
+	}
 	g := New(players(), n, opt, nil)
 	t.Cleanup(g.Close)
 	return g, n
@@ -341,6 +344,88 @@ func TestTsumoWinAndPlacements(t *testing.T) {
 	}
 }
 
+// 荣和：别人打出的牌成全了自己 —— 窗口、裁决、结算一条线走完。
+//
+// 同时验协议 §7.3 第 2 条：**窗口只推给有资格的座位**。"某人收到了 options"这件事
+// 本身就暴露了他可能有和牌机会，所以不能广播之后各自过滤。
+func TestRonClaimWindow(t *testing.T) {
+	hands := [4][]mahjong.Tile{
+		// 庄家摸到 8p，摸切打出去。
+		mahjong.MustParseTiles("111222333444z5z"),
+		// 下家 234m567m234s456s8p + 8p = 断幺九。和牌张补的是**对子**（単騎），
+		// 所以没有平和 —— 这是「同一副牌，自摸和荣和的役可能不同」的实例。
+		mahjong.MustParseTiles("234m567m234s456s8p"),
+		mahjong.MustParseTiles("111188889999m6z"),
+		mahjong.MustParseTiles("1111s77779999s7z"),
+	}
+	g, n := newTestGame(t, Options{
+		Rounds: 1,
+		Wall:   rigWall(t, hands, mahjong.MustParseTiles("8p")[0]),
+	})
+
+	if err := g.Discard(userOf(0), mahjong.MustParseTiles("8p")[0]); err != nil {
+		t.Fatalf("打牌失败: %v", err)
+	}
+
+	w, ok := n.find(userOf(1), protocol.EventGameClaimWindow)
+	if !ok {
+		t.Fatal("能荣和的人没收到鸣牌窗口")
+	}
+	if w["tile"] != "8p" || w["fromSeat"] != float64(0) || w["trigger"] != "discard" {
+		t.Errorf("窗口内容 = %v", w)
+	}
+	opts, _ := w["options"].([]any)
+	if len(opts) != 2 || opts[0] != "ron" || opts[1] != "pass" {
+		t.Errorf("options = %v, 期望 [ron pass]", w["options"])
+	}
+
+	// 没资格的座位**一条都不该收到** —— 收件人名单本身就是隐私。
+	for _, seat := range []int{0, 2, 3} {
+		if n.count(userOf(seat), protocol.EventGameClaimWindow) != 0 {
+			t.Errorf("座位 %d 没有荣和机会，却收到了鸣牌窗口", seat)
+		}
+	}
+
+	if err := g.DeclareWin(userOf(1)); err != nil {
+		t.Fatalf("荣和被拒: %v", err)
+	}
+
+	closed, ok := n.find(userOf(0), protocol.EventGameClaimClosed)
+	if !ok {
+		t.Fatal("窗口没有收尾事件")
+	}
+	if closed["resolvedBy"] != "ron" || closed["seat"] != float64(1) {
+		t.Errorf("claimClosed = %v", closed)
+	}
+
+	end, ok := n.find(userOf(1), protocol.EventGameRoundEnd)
+	if !ok {
+		t.Fatal("没有 game.roundEnd")
+	}
+	if end["endedBy"] != "win" {
+		t.Fatalf("endedBy = %v", end["endedBy"])
+	}
+	win := end["wins"].([]any)[0].(map[string]any)
+	if win["winnerSeat"] != float64(1) || win["isTsumo"] != false {
+		t.Errorf("win = %v", win)
+	}
+	// 自摸是 null，荣和是**放铳者的座位号** —— 0 是合法座位，不能拿哨兵顶。
+	if win["loserSeat"] != float64(0) {
+		t.Errorf("loserSeat = %v, 期望 0（放铳的是庄家）", win["loserSeat"])
+	}
+	// 断幺九 1 翻；门清荣和 20+10，単騎 +2 → 32 → 40 符。子家荣和：放铳者付 1300。
+	if win["han"] != float64(1) || win["fu"] != float64(40) {
+		t.Errorf("翻符 = %v 翻 %v 符, 期望 1 翻 40 符", win["han"], win["fu"])
+	}
+	want := []float64{23700, 26300, 25000, 25000}
+	for i, sc := range end["newScores"].([]any) {
+		if sc != want[i] {
+			t.Errorf("最终分 = %v, 期望 %v", end["newScores"], want)
+			break
+		}
+	}
+}
+
 // rigWall 摆一副完全确定的牌山：前 52 张就是四家的手牌、第 53 张是庄家的第一次摸牌，
 // 其余按一副完整的牌补足到 136 张。
 func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *mahjong.Wall {
@@ -384,6 +469,17 @@ func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *ma
 // 它就是测试里的"假玩家" —— 不做决策，只把回合交出去。返回 false 表示牌山已空。
 func discardDrawn(t *testing.T, g *Game, n *fakeNotifier) bool {
 	t.Helper()
+
+	// 有人能荣和时会开鸣牌窗口，此时没有新的 game.turn。假玩家一律「过」，
+	// 否则这个循环会卡在窗口上（真人也可能过，所以这是合法走法）。
+	for seat := range 4 {
+		if n.count(userOf(seat), protocol.EventGameClaimWindow) >
+			n.count(userOf(seat), protocol.EventGameClaimClosed) {
+			if err := g.Pass(userOf(seat)); err != nil {
+				t.Fatalf("座位 %d 过牌失败: %v", seat, err)
+			}
+		}
+	}
 
 	turn, ok := n.find(userOf(0), protocol.EventGameTurn)
 	if !ok {
