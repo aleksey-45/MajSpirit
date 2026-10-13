@@ -199,3 +199,13 @@ func formatTiles(ts []mahjong.Tile) []string {
 
 // seatName 是 payments 这类"按座位索引的对象"的键名。
 func seatName(seat int) string { return string(rune('0' + seat)) }
+
+// gameMeldView 是一次鸣牌。`tiles` 是**组成面子的那几张**（含从手里出的），
+// `taken` 是从谁那里拿到的那一张 —— 前端要把拿来的那张横过来摆。
+type gameMeldView struct {
+	Seat     int      `json:"seat"`
+	Kind     string   `json:"kind"` // chi / pon / kan
+	Tiles    []string `json:"tiles"`
+	FromSeat int      `json:"fromSeat"`
+	Taken    string   `json:"taken"`
+}

@@ -31,6 +31,7 @@ func (g *Game) startRound() {
 	}
 	g.turn = g.dealer
 	g.drawn = false
+	g.awaitingDiscard = false
 
 	remaining := g.wall.Remaining()
 	g.broadcast(fact{typ: protocol.EventGameStarted, forSeat: func(seat int) any {
@@ -65,6 +66,7 @@ func (g *Game) draw() {
 	g.lastDrawn = t
 	g.hands[g.turn].Add(t)
 	g.drawn = true
+	g.awaitingDiscard = true
 
 	seat, remaining := g.turn, g.wall.Remaining()
 	g.broadcast(fact{typ: protocol.EventGameDrew, forSeat: func(viewer int) any {
@@ -88,21 +90,21 @@ func (g *Game) doDiscard(userID int64, t mahjong.Tile) error {
 	if seat < 0 {
 		return ErrNotInGame
 	}
-	if seat != g.turn || !g.drawn {
+	if seat != g.turn || !g.awaitingDiscard {
 		return ErrNotYourTurn
 	}
 	if err := g.hands[seat].Remove(t); err != nil {
 		return ErrNotHolding
 	}
 
-	g.drawn = false
+	g.awaitingDiscard = false
 	g.discards[seat] = append(g.discards[seat], t)
 	g.deadline = time.Time{}
 
 	g.broadcast(fact{typ: protocol.EventGameDiscarded, data: gameDiscardedView{
 		Seat:      seat,
 		Tile:      formatTile(t),
-		Tsumogiri: t == g.lastDrawn,
+		Tsumogiri: g.drawn && t == g.lastDrawn,
 		Remaining: g.wall.Remaining(),
 	}})
 
@@ -140,16 +142,21 @@ func (g *Game) doWin(userID int64) error {
 	return nil
 }
 
-// onTurnTimeout 回合超时：按摸切处理（摸到什么打什么）。
+// onTurnTimeout 回合超时：自动打一张。
 //
 // 掉线的人卡在这里也不会拖住牌局 —— 这正是"每个等待都必须有超时"那条规矩。
 func (g *Game) onTurnTimeout() {
-	if !g.drawn {
+	if !g.awaitingDiscard {
 		return
 	}
-	g.log.Info("回合超时，摸切", "seat", g.turn)
-	// 手上一定有这张：它就是这一摸加进来的。
-	if err := g.doDiscard(g.players[g.turn].UserID, g.lastDrawn); err != nil {
-		g.log.Info("超时摸切失败", "err", err)
+	// 吃碰之后没有"刚摸的那张"，就按手牌顺序打最小的一张 —— 总得有个确定的默认，
+	// 不能因为"不知道该打哪张"就把回合卡死。
+	tile := g.lastDrawn
+	if !g.drawn {
+		tile = g.hands[g.turn].Tiles()[0]
+	}
+	g.log.Info("回合超时，自动打牌", "seat", g.turn, "tile", formatTile(tile))
+	if err := g.doDiscard(g.players[g.turn].UserID, tile); err != nil {
+		g.log.Info("超时自动打牌失败", "err", err)
 	}
 }

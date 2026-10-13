@@ -219,11 +219,15 @@ func TestTurnTimeoutKeepsGameMoving(t *testing.T) {
 func TestExhaustionDraw(t *testing.T) {
 	g, n := newTestGame(t, Options{Rounds: 1})
 
-	for range 200 {
+	for i := range 200 {
 		if _, ok := n.find(userOf(0), protocol.EventGameRoundEnd); ok {
 			break
 		}
 		if !discardDrawn(t, g, n) {
+			t.Logf("第 %d 步推不动：discard=%d window=%d closed=%d",
+				i, n.count(userOf(0), protocol.EventGameDiscarded),
+				n.count(userOf(0), protocol.EventGameClaimWindow),
+				n.count(userOf(0), protocol.EventGameClaimClosed))
 			break
 		}
 	}
@@ -426,6 +430,89 @@ func TestRonClaimWindow(t *testing.T) {
 	}
 }
 
+// 吃碰：优先级是**荣和 > 碰 > 吃**，同级才看远近。碰的人比吃的人远，照样是碰赢。
+//
+// 顺带验"鸣完由谁打"：鸣牌者不摸牌就得打一张，而且**不能宣告自摸**（没摸牌）——
+// 这就是 `drawn` 和 `awaitingDiscard` 不能合成一个字段的原因。
+func TestPonBeatsChiAndMelderDiscards(t *testing.T) {
+	five := mahjong.MustParseTiles("5m")[0]
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("111222333444z5z"),     // 庄家摸 5m 后摸切
+		mahjong.MustParseTiles("34m111s222s333s1p9p"), // 下家能吃
+		mahjong.MustParseTiles("55m111p222p333p1s9s"), // 对家能碰（比吃的座位远）
+		mahjong.MustParseTiles("666677778888m9p"),
+	}
+	g, n := newTestGame(t, Options{
+		Rounds: 1,
+		Wall:   rigWall(t, hands, five),
+	})
+
+	if err := g.Discard(userOf(0), five); err != nil {
+		t.Fatalf("打牌失败: %v", err)
+	}
+
+	// 两边各自看到自己的选项，而且只有自己能吃的那个选项。
+	chiWin, ok := n.find(userOf(1), protocol.EventGameClaimWindow)
+	if !ok {
+		t.Fatal("下家没收到窗口")
+	}
+	if opts := chiWin["options"].([]any); len(opts) != 2 || opts[0] != "chi" {
+		t.Errorf("下家的 options = %v, 期望 [chi pass]", chiWin["options"])
+	}
+	ponWin, ok := n.find(userOf(2), protocol.EventGameClaimWindow)
+	if !ok {
+		t.Fatal("对家没收到窗口")
+	}
+	if opts := ponWin["options"].([]any); len(opts) != 2 || opts[0] != "pon" {
+		t.Errorf("对家的 options = %v, 期望 [pon pass]", ponWin["options"])
+	}
+
+	// 两家都宣告。**吃的座位更近**，但碰的优先级更高。
+	if err := g.Chi(userOf(1), [2]mahjong.Tile{
+		mahjong.MustParseTiles("3m")[0], mahjong.MustParseTiles("4m")[0]}); err != nil {
+		t.Fatalf("吃失败: %v", err)
+	}
+	if err := g.Pon(userOf(2)); err != nil {
+		t.Fatalf("碰失败: %v", err)
+	}
+
+	meld, ok := n.find(userOf(0), protocol.EventGameMeld)
+	if !ok {
+		for _, e := range n.all(userOf(0)) {
+			t.Logf("%s %s", e.Type, e.Data)
+		}
+		t.Fatal("没有 game.meld")
+	}
+	if meld["seat"] != float64(2) || meld["kind"] != "pon" {
+		t.Errorf("meld = %v, 期望座位 2 碰（碰压过吃）", meld)
+	}
+	if meld["fromSeat"] != float64(0) || meld["taken"] != "5m" {
+		t.Errorf("meld 的来处 = %v / %v", meld["fromSeat"], meld["taken"])
+	}
+	if tiles := meld["tiles"].([]any); len(tiles) != 3 {
+		t.Errorf("碰出来应当是 3 张，实际 %v", meld["tiles"])
+	}
+
+	closed, _ := n.find(userOf(0), protocol.EventGameClaimClosed)
+	if closed["resolvedBy"] != "pon" || closed["seat"] != float64(2) {
+		t.Errorf("claimClosed = %v", closed)
+	}
+
+	// 打牌权归鸣牌者。
+	turn, _ := n.find(userOf(0), protocol.EventGameTurn)
+	if turn["seat"] != float64(2) {
+		t.Errorf("鸣牌之后该由座位 2 打，实际 %v", turn["seat"])
+	}
+	// 没摸牌就不能自摸 —— 这一条是"鸣完不能和"的现场验证。
+	if err := g.DeclareWin(userOf(2)); err == nil {
+		t.Error("鸣牌之后没摸牌，却允许了自摸")
+	}
+	// 但必须能打一张，否则回合就卡死了。
+	if err := g.Discard(userOf(2), mahjong.MustParseTiles("1p")[0]); err != nil {
+		t.Errorf("鸣牌者应当能直接打牌，实际 %v", err)
+	}
+}
+
 // rigWall 摆一副完全确定的牌山：前 52 张就是四家的手牌、第 53 张是庄家的第一次摸牌，
 // 其余按一副完整的牌补足到 136 张。
 func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *mahjong.Wall {
@@ -470,14 +557,14 @@ func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *ma
 func discardDrawn(t *testing.T, g *Game, n *fakeNotifier) bool {
 	t.Helper()
 
-	// 有人能荣和时会开鸣牌窗口，此时没有新的 game.turn。假玩家一律「过」，
-	// 否则这个循环会卡在窗口上（真人也可能过，所以这是合法走法）。
+	// 有人能鸣时会开窗口，此时没有新的 game.turn。假玩家一律「过」。
+	//
+	// 对**四个座位无脑过一遍**，不靠数事件判断窗口开没开：窗口只推给有资格的座位，
+	// 而 claimClosed 是广播给所有人的 —— 拿两个计数相减必然错位。
+	// 没有窗口时 Pass 是空操作（doPass 对没资格的座位返回 nil）。
 	for seat := range 4 {
-		if n.count(userOf(seat), protocol.EventGameClaimWindow) >
-			n.count(userOf(seat), protocol.EventGameClaimClosed) {
-			if err := g.Pass(userOf(seat)); err != nil {
-				t.Fatalf("座位 %d 过牌失败: %v", seat, err)
-			}
+		if err := g.Pass(userOf(seat)); err != nil {
+			t.Fatalf("座位 %d 过牌失败: %v", seat, err)
 		}
 	}
 

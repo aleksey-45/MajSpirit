@@ -9,92 +9,93 @@ import (
 
 // claim.go —— 鸣牌窗口（协议 §6.6）。
 //
-// 一张牌打出来之后，其余三家可能想吃/碰/杠/荣和。这是个**等待**：谁在等、等什么、
+// 一张牌打出来之后，其余三家可能想吃/碰/荣和。这是个**等待**：谁在等、等什么、
 // 什么时候截止。等待本身就是对局状态的一部分 —— 不为此开 goroutine，也不为每个
 // 询问开一个定时器，就记在 `g.claim` 里，到点了 select 会回来。
 //
-// 这一片只做**荣和**：吃/碰/杠要先把副露表示和"鸣完由谁打"接上（阶段四 §4.3 的
-// 下一片），现在窗口里只有 `ron` / `pass` 两个选项。判定逻辑照着协议 §6.6 来：
-//
 //   - 窗口**只推给有资格的座位**，不能广播后各自过滤 —— "某人收到了 options"
 //     这件事本身就暴露了他可能有和牌机会（协议 §7.3 第 2 条）。
-//   - 一炮多响取**头跳**：放铳者的下家 → 对家 → 上家，只认最近一家。
-//     所以一局只可能有 0 或 1 家和牌，「三家和了」在本项目不可达。
+//   - 优先级 **荣和 > 碰 > 吃**，同级按"离放铳者由近到远"。所以不能"谁先回答谁赢"，
+//     得等所有人答完（或到点），再按优先级挑。一炮多响取**头跳**，一局只可能
+//     有 0 或 1 家和牌，「三家和了」在本项目不可达。
+//
+// 杠要摸岭上牌、宝牌指示牌也在王牌里，而 `mahjong.Wall` 还没有王牌 —— 那两件事
+// 一起做，见 meld.go 顶部。
 
 // claim 是一次进行中的鸣牌窗口。
 type claim struct {
-	from     int // 打牌的人
+	from     int
 	tile     mahjong.Tile
-	eligible []int // 能荣和的座位，按"离放铳者由近到远"排好 —— 头跳就是取第一个响应的
+	eligible []int // 有资格的座位，按"离放铳者由近到远"排好
+	options  map[int][]string
 	answered map[int]bool
-	ron      map[int]bool // 宣告了荣和的座位
 	deadline time.Time
+
+	ron map[int]bool
+	pon map[int]bool
+	chi map[int][2]mahjong.Tile
 }
 
 // openClaimWindow 在有人打出一张牌之后开窗口。
 //
-// 没人能荣和就不开窗口，直接轮到下家 —— 那是最常见的情况，不该为它造一次等待。
+// 没人能鸣就不开窗口，直接轮到下家 —— 那是最常见的情况，不该为它造一次等待。
 func (g *Game) openClaimWindow(from int, tile mahjong.Tile) {
-	var eligible []int
+	c := &claim{
+		from:     from,
+		tile:     tile,
+		options:  map[int][]string{},
+		answered: map[int]bool{},
+		ron:      map[int]bool{},
+		pon:      map[int]bool{},
+		chi:      map[int][2]mahjong.Tile{},
+	}
 	for offset := 1; offset < 4; offset++ {
 		seat := (from + offset) % 4
-		if g.canRon(seat, tile) {
-			eligible = append(eligible, seat)
+		if opts := g.claimOptions(seat, from, tile); opts != nil {
+			c.eligible = append(c.eligible, seat)
+			c.options[seat] = opts
 		}
 	}
-	if len(eligible) == 0 {
+	if len(c.eligible) == 0 {
 		g.nextTurn()
 		return
 	}
 
-	g.claim = &claim{
-		from:     from,
-		tile:     tile,
-		eligible: eligible,
-		answered: make(map[int]bool, len(eligible)),
-		ron:      make(map[int]bool, len(eligible)),
-		deadline: time.Now().Add(g.opt.ClaimLimit),
-	}
-	g.deadline = g.claim.deadline
+	c.deadline = time.Now().Add(g.opt.ClaimLimit)
+	g.claim = c
+	g.deadline = c.deadline
 
-	// 只推给有资格的座位。窗口内容对每家**完全一样**（荣和不需要按座位换内容），
-	// 所以走 data 而不是 forSeat —— 但收件人名单是裁过的。
-	deadlineMs := g.claim.deadline.UnixMilli()
-	for _, seat := range eligible {
+	// 窗口内容四家一样，被裁的是**收件人名单**，所以走 data 而不是 forSeat。
+	deadlineMs := c.deadline.UnixMilli()
+	for _, seat := range c.eligible {
 		g.emitTo(seat, fact{typ: protocol.EventGameClaimWindow, data: gameClaimWindowView{
 			Trigger:    "discard",
 			FromSeat:   from,
 			Tile:       formatTile(tile),
-			Options:    []string{"ron", "pass"},
+			Options:    c.options[seat],
 			DeadlineMs: deadlineMs,
 		}})
 	}
 }
 
-// canRon 报告这个座位能不能荣和这张牌。
+// canRon 报告这个座位能不能荣和这张牌：牌型成立、有役、不振听。三道门都在
+// `mahjong.Win` 里（它同时判牌型、役、和 `WinInput.Furiten`）。
 //
-// 三道门都要过：牌型成立、有役、不振听。第三道用规则集 §2.2 的判据 ——
-// **自己舍牌里有自己的听牌张**就是永久振听。
+// 这里不自己抄一遍 —— 抄的那份会和规则层漂开，而漂开的方向是"让不该和的人和了"。
 func (g *Game) canRon(seat int, tile mahjong.Tile) bool {
-	if seat == g.turn && g.drawn {
-		return false // 自己刚打出去的那张（不会发生，但别让判定绕过回合）
-	}
 	in := g.winInput(seat, tile, false)
-	if _, err := mahjong.Win(in, mahjong.DefaultRules()); err != nil {
-		return false
-	}
-	return true
+	_, err := mahjong.Win(in, mahjong.DefaultRules())
+	return err == nil
 }
 
-// doPass 处理 game.pass：放弃这次荣和。
+// doPass 处理 game.pass：放弃这次机会。
 func (g *Game) doPass(userID int64) error {
 	seat := g.seatOf(userID)
 	if seat < 0 {
 		return ErrNotInGame
 	}
 	if g.claim == nil || !g.claim.answers(seat) {
-		// 没有窗口，或者这个座位本来就没资格 —— 两种情况都是"过"了个不存在的东西，
-		// 不算错（客户端可能慢一步发）。
+		// 没有窗口，或者这个座位本来就没资格 —— 客户端可能慢一步发，不算错。
 		return nil
 	}
 	g.claim.answered[seat] = true
@@ -102,24 +103,35 @@ func (g *Game) doPass(userID int64) error {
 	return nil
 }
 
-// claimRon 记录一次荣和宣告。回答齐了就立刻结账，不必等满 3 秒。
+// claimRon 记录一次荣和宣告。
 //
-// 不等满窗口是有意的：头跳只认最近那一家，最近的宣告之后剩下的人答什么都不改变
-// 结果 —— 还等下去只是让三家白看 3 秒。
+// 头跳只认最近的那一家：如果宣告的正是**最近那个能荣和的座位**，后面的人答什么
+// 都不改变结果 —— 立刻结账，不让三家白看 3 秒。否则得等（更近的人可能也要和）。
 func (g *Game) claimRon(seat int) {
-	g.claim.ron[seat] = true
-	g.claim.answered[seat] = true
-	g.resolveClaim()
+	c := g.claim
+	c.ron[seat] = true
+	c.answered[seat] = true
+	if seat == c.nearest("ron") {
+		g.resolveClaim()
+		return
+	}
+	g.maybeResolveClaim()
+}
+
+// nearest 返回按远近排在最前、且有这项选择的座位。
+func (c *claim) nearest(what string) int {
+	for _, seat := range c.eligible {
+		if c.has(seat, what) {
+			return seat
+		}
+	}
+	return -1
 }
 
 // answers 报告这个座位有没有资格回答这个窗口。
 func (c *claim) answers(seat int) bool {
-	for _, s := range c.eligible {
-		if s == seat {
-			return true
-		}
-	}
-	return false
+	_, ok := c.options[seat]
+	return ok
 }
 
 // maybeResolveClaim 所有人都回答了就地裁决；还有人没答就继续等（到点算过）。
@@ -144,50 +156,68 @@ func (g *Game) onClaimTimeout() {
 	g.resolveClaim()
 }
 
-// resolveClaim 裁决并收尾。
-//
-// 头跳：`eligible` 已经按"离放铳者由近到远"排好，取第一个宣告荣和的。
-// 因为只有荣和一个动作，这里不需要"荣和 > 碰/杠 > 吃"那套优先级 ——
-// 等吃碰杠进来时再加，那时的规则是同级之间按逆时针顺序。
+// resolveClaim 按优先级裁决并收尾。
 func (g *Game) resolveClaim() {
 	c := g.claim
 	g.claim = nil
 	g.deadline = time.Time{}
 
-	winner := -1
-	for _, seat := range c.eligible {
-		if c.ron[seat] {
-			winner = seat
-			break
+	seat, kind := c.pick()
+
+	closed := gameClaimClosedView{Trigger: "discard", Seat: -1}
+	if seat >= 0 {
+		closed.ResolvedBy, closed.Seat = kind, seat
+	}
+	g.broadcast(fact{typ: protocol.EventGameClaimClosed, data: closed})
+
+	switch kind {
+	case "ron":
+		in := g.winInput(seat, c.tile, false)
+		res, err := mahjong.Win(in, mahjong.DefaultRules())
+		if err != nil {
+			// canRon 已经用同一个函数判过一次，这里失败说明状态在两次之间被改过。
+			g.log.Error("已经判过能荣和，结账时却失败", "seat", seat, "err", err)
+			g.nextTurn()
+			return
+		}
+		g.settleWin(seat, c.from, c.tile, false, res)
+
+	case "pon":
+		m := g.applyPon(seat, c.tile)
+		g.growMelds(seat, m, c.from, c.tile)
+		g.beginMeldTurn(seat)
+
+	case "chi":
+		m := g.applyChi(seat, c.chi[seat], c.tile)
+		g.growMelds(seat, m, c.from, c.tile)
+		g.beginMeldTurn(seat)
+
+	default:
+		g.nextTurn()
+	}
+}
+
+// pick 按优先级挑赢家：荣和 > 碰 > 吃；同级里离放铳者近的优先。
+func (c *claim) pick() (int, string) {
+	for _, want := range []string{"ron", "pon", "chi"} {
+		for _, seat := range c.eligible {
+			switch want {
+			case "ron":
+				if c.ron[seat] {
+					return seat, "ron"
+				}
+			case "pon":
+				if c.pon[seat] {
+					return seat, "pon"
+				}
+			case "chi":
+				if _, ok := c.chi[seat]; ok {
+					return seat, "chi"
+				}
+			}
 		}
 	}
-
-	resolvedBy := any(nil)
-	if winner >= 0 {
-		resolvedBy = "ron"
-	}
-	g.broadcast(fact{typ: protocol.EventGameClaimClosed, data: gameClaimClosedView{
-		Trigger:    "discard",
-		ResolvedBy: resolvedBy,
-		Seat:       winner,
-	}})
-
-	if winner < 0 {
-		g.nextTurn()
-		return
-	}
-
-	// 荣和的和牌张**不在**手里，winInput 会替我们加上（协议 §5.3 的 game.win
-	// 由服务端按上下文判断自摸还是荣和）。
-	in := g.winInput(winner, c.tile, false)
-	res, err := mahjong.Win(in, mahjong.DefaultRules())
-	if err != nil {
-		// canRon 已经用同一个函数判过一次，这里失败说明状态在两次之间被改过。
-		g.log.Error("已经判过能荣和，结账时却失败", "seat", winner, "err", err)
-		g.nextTurn()
-		return
-	}
-	g.settleWin(winner, c.from, c.tile, false, res)
+	return -1, ""
 }
 
 // nextTurn 没有人鸣：轮到下家摸牌。

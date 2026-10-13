@@ -82,10 +82,14 @@ type Game struct {
 	wall     *mahjong.Wall
 	hands    [4]*mahjong.Hand
 	discards [4][]mahjong.Tile
+	melds    [4][]mahjong.Meld
 
-	turn      int
-	drawn     bool
-	lastDrawn mahjong.Tile
+	turn int
+	// drawn 与 awaitingDiscard 是两件事，不能合成一个：
+	// **吃碰之后要打牌，但没有摸牌**。合成一个的话，鸣完就能宣告自摸。
+	drawn           bool
+	awaitingDiscard bool
+	lastDrawn       mahjong.Tile
 
 	deadline time.Time
 	// claim 非 nil 表示正在等鸣牌回应。此时 deadline 是**窗口**的截止时刻。
@@ -181,6 +185,17 @@ func (g *Game) Pass(userID int64) error {
 	return g.call(command{kind: cmdPass, id: userID})
 }
 
+// Chi 是 game.chi：下家吃。tiles 是**手里那两张**，含哪两张由客户端说 ——
+// 手里可能有好几种吃法，挑哪一种只有玩家知道。
+func (g *Game) Chi(userID int64, tiles [2]mahjong.Tile) error {
+	return g.call(command{kind: cmdChi, id: userID, chi: tiles})
+}
+
+// Pon 是 game.pon。
+func (g *Game) Pon(userID int64) error {
+	return g.call(command{kind: cmdPon, id: userID})
+}
+
 // Close 停掉这一场并等 goroutine 退出。可以重复调用。
 func (g *Game) Close() {
 	g.shutdown()
@@ -213,12 +228,15 @@ const (
 	cmdDiscard cmdKind = iota
 	cmdWin
 	cmdPass
+	cmdChi
+	cmdPon
 )
 
 type command struct {
 	kind  cmdKind
 	id    int64
 	tile  mahjong.Tile
+	chi   [2]mahjong.Tile
 	reply chan error
 }
 
@@ -231,6 +249,10 @@ func (g *Game) handle(c command) {
 		err = g.doWin(c.id)
 	case cmdPass:
 		err = g.doPass(c.id)
+	case cmdChi:
+		err = g.doChi(c.id, c.chi)
+	case cmdPon:
+		err = g.doPon(c.id)
 	}
 	c.reply <- err
 }

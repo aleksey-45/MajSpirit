@@ -15,3 +15,6 @@ var (
 	// 那等于把别家看不到的信息漏出去。细节只进日志。
 	ErrNoWin = errors.New("现在不能和牌")
 )
+
+// ErrNoClaim 表示现在没有可以鸣的牌，或者这个座位没有鸣它的资格。
+var ErrNoClaim = errors.New("现在没有可以鸣的牌")
