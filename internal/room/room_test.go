@@ -324,6 +324,9 @@ func TestReconnectWithinHoldKeepsSeat(t *testing.T) {
 	if err := r.Disconnected(2); err != nil {
 		t.Fatal(err)
 	}
+	// 数一下重连前有几条：他**加入**时本来就收到过一条 room.joined，
+	// 只断言"存在"的话，重连不补发也照样通过（变异实测过）。
+	before := n.count(2, protocol.EventRoomJoined)
 	if err := r.Reconnected(2); err != nil {
 		t.Fatal(err)
 	}
@@ -331,11 +334,14 @@ func TestReconnectWithinHoldKeepsSeat(t *testing.T) {
 		t.Fatalf("重连后座位 1 应当是 connected=true, 实际 %v", s)
 	}
 
-	// 回来的人必须重新拿到 roomId 与自己的座位：刷新过的页面手上什么都没有，
-	// 而 room.joined 是客户端重建房间视图的唯一来源（协议 §4.5）。
+	// 回来的人必须重新拿到 roomId 与自己的座位：room.joined 才带 mySeat，
+	// room.seats 只说谁在座（协议 §4.5）。
+	if got := n.count(2, protocol.EventRoomJoined); got != before+1 {
+		t.Fatalf("重连没有补发 room.joined（%d → %d）—— 刷新过的页面画不出座位", before, got)
+	}
 	m, ok := n.find(2, protocol.EventRoomJoined)
 	if !ok {
-		t.Fatal("重连没有补发 room.joined —— 刷新过的页面画不出座位")
+		t.Fatal("没有 room.joined")
 	}
 	if m["roomId"] != r.ID() || m["mySeat"] != float64(1) {
 		t.Errorf("room.joined = %v, 期望 roomId %s / mySeat 1", m, r.ID())
