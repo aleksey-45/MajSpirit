@@ -25,6 +25,7 @@ import (
 	"github.com/aleksey-45/majspirit/internal/auth"
 	"github.com/aleksey-45/majspirit/internal/store"
 	"github.com/aleksey-45/majspirit/internal/user"
+	"github.com/aleksey-45/majspirit/internal/ws"
 )
 
 // defaultTokenTTL 是登录令牌的有效期。
@@ -130,6 +131,9 @@ func run(ctx context.Context, cfg config) error {
 	// revoker 建一次、由 Logout 与 Authenticate 共用。
 	svc := user.New(pool, cfg.JWTSecret, cfg.TokenTTL, auth.NewRevoker())
 	mux.Handle("/api/", api.NewRouter(svc))
+	// WebSocket 入口。刻意不在 /api/ 下（协议 §2.1），也不走 api.NewRouter：
+	// ws 与 api 互不认识，由这里把它们分开挂上，各自不需要知道对方存在。
+	mux.Handle("GET /ws", ws.Handler())
 
 	srv := &http.Server{
 		Handler: mux,
