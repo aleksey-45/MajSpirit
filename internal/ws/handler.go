@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -20,6 +19,19 @@ const (
 	// 首帧鉴权方案唯一的真风险就在这里：没有它，谁都能开一堆空连接占着
 	// goroutine 和 fd，而且服务端还不会察觉。
 	authTimeout = 5 * time.Second
+
+	// pingInterval / pongTimeout 是心跳的节奏（协议 §4.3）。
+	pingInterval = 15 * time.Second
+	pongTimeout  = 5 * time.Second
+
+	// readLimit 是单条消息的字节上限。
+	//
+	// 库的默认值是 32768（read.go:107），超了返回 ErrMessageTooBig 并以 1009 关连接。
+	// 协议 §6.2 的 game.snapshot 带四家手牌 + 四家牌河 + 副露 + 宝牌指示牌，
+	// 逐座位定制后粗估 2–4 KB —— 默认值够用，但它不是按本协议算出来的：
+	// 消息一长大（比如阶段六的数据统计），症状是客户端带着 1009 随机掉线，
+	// 而小消息测不出。取 1 MiB 留出余量；上限本身是防内存打爆的唯一一道。
+	readLimit = 1 << 20
 )
 
 // Authenticator 是 ws 需要的认证能力。
@@ -38,10 +50,20 @@ type Authenticator interface {
 type Handler struct {
 	auth    Authenticator
 	timeout time.Duration
+
+	// pingInterval / pongTimeout 同样是字段：心跳测试若真等 15+5 秒，
+	// 一条用例就够拖垮整个套件。零值表示用上面的默认常量。
+	pingEvery time.Duration
+	pongWait  time.Duration
 }
 
 func NewHandler(auth Authenticator) *Handler {
-	return &Handler{auth: auth, timeout: authTimeout}
+	return &Handler{
+		auth:      auth,
+		timeout:   authTimeout,
+		pingEvery: pingInterval,
+		pongWait:  pongTimeout,
+	}
 }
 
 // ServeHTTP 实现 http.Handler。
@@ -53,157 +75,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Info("websocket 升级失败", "err", err)
 		return
 	}
-	// 实验：临时注掉
+	defer c.CloseNow() // 兜底：任何路径退出都保证连接被关掉
 
-	// 升级之后 r.Context() 不可直接用了——连接已经从 HTTP 服务器手里被抢走，
-	// 那个 ctx 会在 handler 返回时被取消，而我们要它活到连接断开。
-	// 但也不能拿 context.Background() 当底：那样进程退出（Ctrl+C / SIGTERM）时
-	// 这条连接收不到取消，main 里的优雅关闭对它不起作用。
-	// WithoutCancel 正好是这个意思：保留请求 ctx 上的值，剥掉它的取消信号。
+	// 读上限要在读之前设。
+	c.SetReadLimit(readLimit)
+
+	// 升级之后 r.Context() 不可直接用：它的取消跟着 handler 返回，而这条连接
+	// 要活到断开。也不能用 Background 当底，那样进程退出时它收不到取消。
+	// WithoutCancel 保留请求 ctx 上的值、剥掉取消信号。
 	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 	defer cancel()
 
-	// sessionId 只算一次，日志和 hello 共用。它唯一的用途就是让客户端报的值
-	// 能在日志里搜到，分头算两次等于这个字段白设。
+	// sessionId 只算一次，日志和 hello 共用。
 	session := newSessionID()
 	log := slog.With("session", session)
 	log.Info("websocket 连接建立", "remote", r.RemoteAddr)
 
-	u, err := h.authenticate(ctx, c, session, log)
-	if err != nil {
-		// authenticate 已经给对端发了关闭码，这里只收尾记一笔。
+	client := newClient(c, h.auth, log)
+	client.authTimeout = h.timeout
+	defer client.Close(0, "")
+
+	// 写 goroutine 从认证阶段就起来：hello、error、authed 也走 Send，
+	// 于是"一条写路径"从第一条消息起就成立。
+	client.startWriter(ctx)
+
+	if err := client.authLoop(ctx, session); err != nil {
+		// authLoop 已经给对端发了关闭码，这里只收尾记一笔。
 		log.Info("连接结束", "stage", "auth", "err", err)
 		return
 	}
 
+	u := client.user
 	log.Info("认证通过", "userId", u.ID, "username", u.Username)
 	defer log.Info("websocket 连接断开")
 
-	// 已认证。第 3 步到此为止：把收到的指令记下来，谁处理它们留给后续步骤。
-	//
-	// 读用 Background 而不是 ctx：带取消的 ctx 一旦被取消，库会顺手关掉连接。
-	// 进程退出时那条路现在的行为是"连接被库关掉、读报错返回"，第 4 步接房间层
-	// 时要把这条收干净（届时会有连接注册表，能显式关）。
-	for {
-		env, data, err := readCommand(context.Background(), c)
-		if err != nil {
-			// 客户端关页面、网线拔了都走这里，属于正常结束，用 Info 不用 Error。
-			log.Info("读取结束", "err", err)
-			return
-		}
-		log.Info("收到指令", "type", string(env.Type), "data", string(data))
-	}
-}
-
-// authenticate 在 h.timeout 内等第一条 auth 指令，成功返回用户。
-//
-// 返回错误时连接已经被关掉，调用方直接返回即可。
-//
-// session 由调用方算好传进来，不在这里再算一次（这个错犯过两次）。
-//
-// 超时不能用"带截止时间的 ctx 去读"这种直观写法实现。踩过的坑：
-// coder/websocket 的 setupReadTimeout（conn.go:187）在读的 ctx 到期时会顺手
-// c.close() 把整条连接关掉，而 writeFrame 里有一段
-//
-//	if c.isClosed() && opcode == opClose { err = nil }
-//
-// 于是后续那个 Close(4401) 既不写关闭帧、又返回 nil —— 客户端只看到 EOF，
-// CloseStatus 拿到 -1，而协议 §4.1 明确要求 4401。实测对照过：
-// "认证失败"那条路（不涉及 ctx 到期）关闭帧正常上线，只有超时这条路丢帧。
-//
-// 解法是把读和计时器并发等：到点由我们主动关，连接还是活的，关闭帧发得出去。
-// 读用 context.Background()：库对 ctx.Done() == nil 的 ctx 不设内部超时
-// （setupReadTimeout 第一行的 return false），连接的生命周期交回给这里管。
-func (h *Handler) authenticate(ctx context.Context, c *websocket.Conn, session string, log *slog.Logger) (user.User, error) {
-	// 读和写都用一个不带取消的 ctx：超时由下面的定时器负责，
-	// 让库自己去关连接会让关闭码发不出去（见上面那段）。
-	writeCtx := context.WithoutCancel(ctx)
-	readCtx := context.Background()
-
-	if err := writeEvent(writeCtx, c, EventHello, hello{
-		ProtocolVersion: protocolVersion,
-		ServerTime:      time.Now().UnixMilli(),
-		SessionID:       session,
-	}); err != nil {
-		closeConn(c, websocket.StatusInternalError, "发送 hello 失败")
-		return user.User{}, err
-	}
-
-	deadline := time.After(h.timeout)
-
-	// 一次只跑一个读。超时后这个 goroutine 会一直挂在读上，直到连接被真正关掉
-	// （Close 会把它唤醒）—— 所以不能每轮循环都新起一个，否则泄漏的是无限多个。
-	type readResult struct {
-		env Envelope
-		err error
-	}
-	reads := make(chan readResult, 1)
-	go func() {
-		env, _, err := readCommand(readCtx, c)
-		reads <- readResult{env, err}
-	}()
-
-	for {
-		select {
-		case <-deadline:
-			// 到点了，连接还是活的 —— 关闭帧发得出去。
-			closeConn(c, statusAuthFailed, "认证超时")
-			return user.User{}, context.DeadlineExceeded
-
-		case r := <-reads:
-			if r.err != nil {
-				// 客户端正常关闭也走这条：对已经断掉的连接再关一次是无害的
-				// （Close 幂等）。但绝不能把它记成"认证超时"，否则日志里
-				// 全是假信号，真的超时反而看不出来。
-				closeConn(c, statusProtocolError, "协议错误")
-				return user.User{}, r.err
-			}
-
-			if r.env.Type != CmdAuth {
-				// 认证前发别的：回 AUTH_REQUIRED，但连接留着 —— 他还有时间正确认证。
-				// 直接关掉的话，一个把 auth 排在别的消息后面的客户端就永远进不来，
-				// 而协议只要求"拒绝"，没要求"断开"。
-				_ = writeEvent(writeCtx, c, EventError, errorEvent{
-					Code:    CodeAuthRequired,
-					Message: "请先认证",
-					Ref:     r.env.Type,
-				})
-				go func() {
-					env, _, err := readCommand(readCtx, c)
-					reads <- readResult{env, err}
-				}()
-				continue
-			}
-
-			var cmd authCommand
-			if err := json.Unmarshal(r.env.Data, &cmd); err != nil {
-				closeConn(c, statusProtocolError, "auth 的 data 不是对象")
-				return user.User{}, err
-			}
-
-			u, err := h.auth.Authenticate(ctx, cmd.Token)
-			if err != nil {
-				// 日志里分得清是票坏了还是库挂了（排查要这个），但发给客户端的
-				// 只有一个答案：客户端对这两种情况的处置是同一个动作——重新登录。
-				// 所以不造第二个错误码，也别把库的错误细节发出去。
-				log.Info("认证失败", "err", err)
-				_ = writeEvent(writeCtx, c, EventError, errorEvent{
-					Code:    CodeAuthFailed,
-					Message: "认证失败",
-					Ref:     CmdAuth,
-				})
-				closeConn(c, statusAuthFailed, "认证失败")
-				return user.User{}, err
-			}
-
-			if err := writeEvent(writeCtx, c, EventAuthed, authedEvent{
-				UserID:   u.ID,
-				Username: u.Username,
-			}); err != nil {
-				closeConn(c, websocket.StatusInternalError, "发送 authed 失败")
-				return user.User{}, err
-			}
-			return u, nil
-		}
-	}
+	// 读留在主 goroutine：它是最长的那个，出错就收摊。
+	// 心跳独立成 goroutine —— Ping 要等读把 pong 读出来，两者必须并发。
+	go client.heartbeat(ctx)
+	client.readLoop()
 }
