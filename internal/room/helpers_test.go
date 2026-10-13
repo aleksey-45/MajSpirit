@@ -108,10 +108,16 @@ func testUser(id int64, name string) user.User {
 // newTestRoom 起一个 Hub + 一个房间。hold 是保座时长（测试不能真等 2 分钟）。
 func newTestRoom(t *testing.T, hold time.Duration) (*Hub, *Room, *fakeNotifier) {
 	t.Helper()
+	return newTestRoomWith(t, tuning{hold: hold, turnLimit: time.Second, turnBase: time.Second})
+}
+
+// newTestRoomWith 同上，但整套参数由调用方给 —— 对局用例要改回合时限、摆牌、改局数。
+func newTestRoomWith(t *testing.T, tune tuning) (*Hub, *Room, *fakeNotifier) {
+	t.Helper()
 	n := newFakeNotifier()
 	h := NewHub(n, nil)
 	t.Cleanup(h.Close)
 
-	r := newRoom("TEST01", testUser(1, "甲"), h, hold)
+	r := newRoom("TEST01", testUser(1, "甲"), h, tune)
 	return h, r, n
 }

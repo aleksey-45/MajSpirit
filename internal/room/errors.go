@@ -20,4 +20,16 @@ var (
 	// ErrClosed 表示房间已经关闭。关闭之后往 commands 里发消息会 panic，
 	// 所以每个入口都要先看这个。
 	ErrClosed = errors.New("房间已关闭")
+
+	// ErrNotPlaying 表示这个房间现在不在对局中。
+	ErrNotPlaying = errors.New("不在对局中")
+	// ErrNotYourTurn 表示现在不是这个座位该行动。
+	ErrNotYourTurn = errors.New("还没轮到你")
+	// ErrNotHolding 表示手里没有这张牌。
+	ErrNotHolding = errors.New("手里没有这张牌")
+	// ErrNoWin 表示现在不能和牌：牌型不对、没有役、或者振听。
+	//
+	// 三种原因合成一个对外错误是有意的 —— 服务端不该告诉客户端"你有役但振听了"，
+	// 那等于把别家看不到的信息漏出去。细节只进日志。
+	ErrNoWin = errors.New("现在不能和牌")
 )

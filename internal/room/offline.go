@@ -12,10 +12,10 @@ import (
 	"github.com/aleksey-45/majspirit/internal/protocol"
 )
 
-// offlineHold 是断线后保留座位的时长（协议 §4.5）。
+// defaultOfflineHold 是断线后保留座位的时长（协议 §4.5）。
 //
 // 写成常量而不是配置项：同一场对局里四个人面对不同的保座窗口，出了争议没法查证。
-const offlineHold = 120 * time.Second
+const defaultOfflineHold = 120 * time.Second
 
 func (r *Room) doDisconnected(userID int64) error {
 	s := r.seatOf(userID)
@@ -66,7 +66,7 @@ func (r *Room) attach(s int) error {
 func (r *Room) evictExpired() {
 	now := time.Now()
 	for i, s := range r.seats {
-		if s == nil || s.connected || now.Before(s.offlineAt.Add(r.hold)) {
+		if s == nil || s.connected || now.Before(s.offlineAt.Add(r.tune.hold)) {
 			continue
 		}
 		r.log.Info("保座超时，关闭房间", "seat", i, "userId", s.user.ID)
@@ -92,7 +92,7 @@ func (r *Room) earliestOfflineDeadline() (time.Time, bool) {
 		if s == nil || s.connected {
 			continue
 		}
-		d := s.offlineAt.Add(r.hold)
+		d := s.offlineAt.Add(r.tune.hold)
 		if !found || d.Before(best) {
 			best, found = d, true
 		}

@@ -21,26 +21,31 @@ type Notifier interface {
 
 // fact 是一条已经发生的**事实**：房间里刚刚发生了这件事。
 //
-// 它是"事实"，不含可见性 —— 谁该看到什么由 project 决定。
+// 可见性由这两个字段二选一：
+//
+//	data    大厅事件用。四个座位收到的**是同一份字节** —— 大厅没有隐藏信息。
+//	forSeat 对局事件用。按座位现构造，`myHand`、别人摸到的牌都只给本人。
+//
+// 隐藏信息**只能**从 forSeat 里产生。写进 data 就是泄漏，而且是对所有人广播。
 type fact struct {
-	typ  protocol.Command
-	data any
+	typ     protocol.Command
+	data    any
+	forSeat func(seat int) any
 }
 
 // project 返回 seat 这个收件人应当收到的信封。
 //
-// **全服务端只有这里能把多家可见状态编进一条外发消息。** 目前大厅事件对四个座位
-// 完全一样（大厅没有隐藏信息）；对局事件要在这里按座位裁剪 —— 别家的手牌、别人
-// 摸到的牌、`claimWindow` 的候选都只给该看到的人，协议 §7.2 那张核对表就是它的规格。
-//
-// 参数 seat 现在用不上，留着是因为它就是那个裁剪点：签名先立在这里，
-// 免得日后有人图省事在 broadcast 里直接拼信封。
+// **全服务端只有这里能把多家可见状态编进一条外发消息。** 协议 §7.2 那张核对表
+// 就是它的规格；配套的单测直接断言**序列化后的字节**里没有别家的手牌。
 //
 // 必须是**纯函数**：不碰网络、不碰库、不碰并发。这样"别家的牌有没有被编进字节里"
 // 可以直接单测，而不必端到端抓包。
 func project(seat int, f fact) protocol.Envelope {
-	_ = seat
-	return protocol.Envelope{Type: f.typ, Data: mustJSON(f.data)}
+	payload := f.data
+	if f.forSeat != nil {
+		payload = f.forSeat(seat)
+	}
+	return protocol.Envelope{Type: f.typ, Data: mustJSON(payload)}
 }
 
 // mustJSON 编码事件体。编码失败说明塞了个不能编码的类型，是程序 bug。

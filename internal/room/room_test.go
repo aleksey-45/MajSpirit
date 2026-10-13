@@ -388,7 +388,8 @@ func TestNotifyFailureDoesNotBreakRoom(t *testing.T) {
 	n := &failingNotifier{}
 	h := NewHub(n, nil)
 	defer h.Close()
-	r := newRoom("TEST02", testUser(1, "甲"), h, fastHold)
+	r := newRoom("TEST02", testUser(1, "甲"), h,
+		tuning{hold: fastHold, turnLimit: time.Second, turnBase: time.Second})
 
 	for i := int64(2); i <= 4; i++ {
 		if err := r.Join(testUser(i, "玩家")); err != nil {

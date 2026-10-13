@@ -95,8 +95,7 @@ func (r *Room) doStart(userID int64) error {
 
 	r.phase = phasePlaying
 	r.log.Info("开局", "players", 4)
-	// 阶段四 §4.3 的接缝就在这里：下面要把对局跑起来（洗牌、发牌、game.started、
-	// 然后进入带等待的状态机）。现在只切状态 —— 别处不许自己造一个"开局"。
+	r.startGame()
 	return nil
 }
 

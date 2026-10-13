@@ -96,6 +96,35 @@ func (w *Wall) Sequence() string {
 	return b.String()
 }
 
+// NewWallFromTiles 用**给定的摸牌顺序**构造牌山。
+//
+// 要求 136 张、每种恰好 4 张（比"不超过 4 张"更严：这是一副完整的牌）。
+//
+// 两个用途：
+//
+//   - 测试要摆一副**确定**的牌。搜一个能开出目标手牌的种子也行，但那种测试会
+//     随着洗牌算法的任何改动一起碎，而且碎的时候看不出是"摆牌变了"还是"逻辑坏了"。
+//   - 从存档的摸牌顺序复原牌局（`Wall.Sequence()` 存进库的就是它）。
+func NewWallFromTiles(tiles []Tile) (*Wall, error) {
+	if len(tiles) != NumTiles {
+		return nil, fmt.Errorf("mahjong: 牌山需要 %d 张，实际 %d 张", NumTiles, len(tiles))
+	}
+	var counts Counts
+	for _, t := range tiles {
+		if !t.Valid() {
+			return nil, fmt.Errorf("mahjong: 牌山里出现非法牌 %d", t)
+		}
+		counts[t.Kind()]++
+	}
+	for k, c := range counts {
+		if c != numCopies {
+			return nil, fmt.Errorf("mahjong: %s 有 %d 张，一副牌里应有 %d 张",
+				Tile(k), c, numCopies)
+		}
+	}
+	return &Wall{tiles: append([]Tile(nil), tiles...)}, nil
+}
+
 // Deal 给四家各发 13 张初始手牌，返回的索引即座位号。
 //
 // 庄家的第 14 张不在这里发——它作为庄家的第一次摸牌由房间层调用 Draw 取得。

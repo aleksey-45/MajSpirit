@@ -91,7 +91,7 @@ func (h *Hub) Create(owner user.User) (*Room, error) {
 				return
 			}
 		}
-		r := newRoom(id, owner, h, offlineHold)
+		r := newRoom(id, owner, h, productionTuning())
 		rooms[id] = r
 		reply <- result{room: r}
 	})
