@@ -20,10 +20,8 @@ type hubOp func(rooms map[string]*Room)
 // 创建、查找、销毁三处都碰这张表，串行化比在三处各想一遍锁简单 ——
 // 而且"房间销毁时把它从表里摘掉"这件事天然发生在同一个 goroutine 里。
 //
-// notify 是它下面所有房间共用的投递函数（就是 internal/ws 的注册表）。
-//
-// 房间不各存一份投递方，而是各自拿它造一个 Emitter：投递是共用的，序号流不是 ——
-// 序号必须**按房间**分开（协议 §1.4）。
+// send 是它下面所有房间共用的投递函数（也就是 internal/ws 的注册表）。
+// 每个房间用它各造一个 Emitter：投递共用，序号流按房间分开（协议 §1.4）。
 type Hub struct {
 	ops     chan hubOp
 	closing chan struct{}
@@ -128,11 +126,9 @@ func (h *Hub) Len() int {
 
 // ByUser 找这个人坐在哪个房间。
 //
-// 扫一遍房间表，而不是维护一张 userId → room 的索引：座位变化发生在房间自己的
-// goroutine 里，Hub 收不到通知，要维护索引就得让每个座位变化都回投一条指令 ——
-// 漏一处就是"把指令投进他已经离开的房间"，而这种错不报错、只表现为行为诡异。
-//
-// 扫的是每个房间的只读快照（Room.HasUser），不是房间的座位表 —— 那张表外面读不得。
+// 扫房间表，不维护 userId → room 的索引：座位变化发生在房间自己的 goroutine 里，
+// 要维护索引就得让每次座位变化都回投一条指令，漏一处就是错答案。
+// 扫的是每个房间的只读快照（Room.HasUser），座位表外面读不得。
 func (h *Hub) ByUser(userID int64) (*Room, bool) {
 	reply := make(chan *Room, 1)
 	if !h.post(func(rooms map[string]*Room) {

@@ -1,6 +1,7 @@
 package game
 
 // emit.go —— 事件体怎么变成发给某个座位的信封：事实、按座位投影。
+// 发号与投递见 emit_seq.go。
 
 import (
 	"encoding/json"
@@ -8,9 +9,6 @@ import (
 	"github.com/aleksey-45/majspirit/internal/protocol"
 )
 
-// Notifier 与"发号"都不在这里：投递用的是 protocol.Emitter，而且必须是**房间那个**
-// （开局时传进来）—— 见 emit_seq.go。这里只负责"谁该看到什么"。
-//
 // fact 是一条已经发生的**事实**：牌桌上刚刚发生了这件事。
 //
 // 可见性由这两个字段二选一：
@@ -27,12 +25,10 @@ type fact struct {
 
 // project 返回 seat 这个收件人应当收到的信封。
 //
-// **全服务端只有这里能把多家可见状态编进一条外发消息。** 协议 §7.2 那张核对表
-// 就是它的规格；配套的单测直接断言**序列化后的字节**里没有别家的手牌。
+// 它是**唯一**能把多家可见状态编进一条外发消息的地方（协议 §7.2 的核对表），
+// 而且是纯函数：不碰网络、不碰库、不碰并发。
 //
-// 必须是纯函数：不碰网络、不碰库、不碰并发。
-//
-// 它不填 seq：一条事件的四个收件人必须共用一个号，而这里只看得见一个座位。
+// 不填 seq：一条事件的各个收件人各有自己的号，而这里只看得见一个座位。
 func project(seat int, f fact) protocol.Envelope {
 	payload := f.data
 	if f.forSeat != nil {

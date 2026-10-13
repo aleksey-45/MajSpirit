@@ -45,13 +45,8 @@ func (r *Room) doReconnected(userID int64) error {
 
 // attach 把座位标回在线，并把房间的现状告诉回来的人。
 //
-// room.joined 不是"新加入"的专属：它带 roomId 与 mySeat，是客户端重建房间视图的
-// 唯一来源。断线重连（协议 §4.5）、刷新页面之后、以及重发一次 room.join 都走这条
-// 路 —— 少了它，客户端只知道自己"还在房间里"，不知道在哪个房间、坐第几位，
-// 刷新过一次的页面就再也画不出座位。
-//
-// 座位本来就是在线时（连接断得比服务端发现得还快）什么状态都不变，
-// 但 room.joined 照样要发：客户端此刻手上是真的什么都没有。
+// room.joined 不是"新加入"的专属：它带 roomId 与 mySeat，而 room.seats 只说谁在座。
+// 座位本来就在线时（连接断得比服务端发现得还快）也照发 —— 客户端此刻什么都没。
 func (r *Room) attach(s int) error {
 	r.emitTo(s, fact{typ: protocol.EventRoomJoined, data: roomJoined{
 		RoomID: r.id,

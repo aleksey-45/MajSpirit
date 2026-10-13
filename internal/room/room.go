@@ -83,8 +83,7 @@ type Room struct {
 	hub *Hub
 	log *slog.Logger
 
-	// stream 是这个房间的**事件流**：房间与它开的对局共用这一个，
-	// 所以 seq 是房间级的一条线（协议 §1.4）。见 emit.go 与 protocol.Emitter。
+	// stream 是这个房间的事件流：房间与它开的对局共用这一个（协议 §1.4）。
 	stream *protocol.Emitter
 
 	commands chan command
@@ -100,34 +99,29 @@ type Room struct {
 	// tune 在构造后就只读，所以可以从任何 goroutine 看。
 	tune tuning
 
-	// games 是当前那一场对局。**它不归房间的 goroutine 独占** —— 对局是另一个
-	// actor（internal/game），有自己的 goroutine，所以这里用原子指针而不是普通字段：
-	// 房间在 run() 里存/清它，ws 层从外面读它去投 game.* 指令。
+	// games 是当前那一场对局。对局是另一个 actor，有自己的 goroutine，
+	// 所以这里用原子指针：run() 里存/清它，ws 层从外面读它去投 game.* 指令。
 	games atomic.Pointer[game.Game]
 
 	// who 是"这个房间里有哪些人"的只读快照，同样给外面看（Hub.ByUser）。
-	// 座位表本身归 run() 独占，从外面读它就是竞态，所以座位一变就整份换掉 ——
-	// 换座位的地方只有 doJoin 与 doLeave 两处，都由 refreshWho 收口。
+	// 座位表归 run() 独占，从外面读它就是竞态，所以座位一变就整份换掉。
 	who atomic.Pointer[map[int64]struct{}]
 
 	// ↓↓↓ 以下字段只在 run() 的 goroutine 里读写 ↓↓↓
 
 	seats   [4]*seat
 	phase   phase
-	seq     int
 	ownerID int64
 }
 
 // Game 返回当前那一场对局；不在对局中返回 nil。
 //
-// ws 层拿它去投 game.discard / game.win —— 那些指令**不经过房间**，房间不必替
-// 对局转发（转发只是多一跳，还让房间得懂对局指令）。
+// ws 层拿它去投 game.* 指令 —— 那些指令不经过房间（见 internal/game 的 doc.go）。
 func (r *Room) Game() *game.Game { return r.games.Load() }
 
 // HasUser 报告这个人在不在这个房间。任何 goroutine 都可以调（只读快照）。
 //
-// 它给 Hub.ByUser 用：网关要靠"这个人在哪个房间"来投对局指令、判断重连、
-// 拦住"同时进两个房间"。座位表本身外面读不得，所以另有一份快照。
+// 给 Hub.ByUser 用：网关靠"这个人在哪个房间"投对局指令、判断重连。
 func (r *Room) HasUser(userID int64) bool {
 	m := r.who.Load()
 	if m == nil {
@@ -187,7 +181,7 @@ func (r *Room) run() {
 		case <-expired:
 			r.onDeadline()
 		case <-r.closing:
-			// 先带走对局再退出：房间没了，对局不能自己活下去（见 stopGame）。
+			// 退出前带走对局（见 stopGame）。
 			r.stopGame()
 			return
 		}
@@ -237,9 +231,8 @@ func (r *Room) Close() {
 
 // call 投一条指令并等回复。
 //
-// commands 是**无缓冲**的：一次投递只有被 run() 接住才算成功。房间退出后
-// commands **不会**被关闭（关闭它才是灾难 —— 往已关闭的 channel 发送会 panic），
-// 靠 stopped 判断。
+// commands 无缓冲：一次投递只有被 run() 接住才算成功。房间退出后 commands 不会被
+// 关闭（关闭它才是灾难 —— 往已关闭的 channel 发送会 panic），靠 stopped 判断。
 func (r *Room) call(c command) error {
 	if r.closed.Load() {
 		return ErrClosed
@@ -249,8 +242,8 @@ func (r *Room) call(c command) error {
 	case r.commands <- c:
 		return <-c.reply
 	case <-r.closing:
-		// 房间正在关闭。少了这一支就会互等：run 退出前要关对局（stopGame），
-		// 而对局的 goroutine 可能正卡在 postGameEnded 的这一次 call 上等回复。
+		// 与 stopGame 互等的入口：对局的 goroutine 可能正卡在 postGameEnded
+		// 的这一次 call 上，而 run 正等它退出。
 		return ErrClosed
 	case <-r.stopped:
 		return ErrClosed
@@ -311,7 +304,7 @@ func (r *Room) startGame() {
 
 // postGameEnded 由对局在自己的 goroutine 里调。
 //
-// **它只能投一条指令**，不能碰房间状态 —— 那是另一个 goroutine 的地盘。
+// 只能投一条指令，不能碰房间状态 —— 那是另一个 goroutine 的地盘。
 func (r *Room) postGameEnded() {
 	_ = r.call(command{kind: cmdGameEnded})
 }
@@ -343,11 +336,8 @@ func (r *Room) destroyIfEmpty() {
 
 // stopGame 带走手上那一场对局。
 //
-// 房间没了，对局不能自己活下去：它有自己的 goroutine 和秒表，会把牌局推完，
-// 而收件人已经回大厅甚至已经不在这个房间了。另一头是 game.endGame 里的自退 ——
-// 正常打完由对局自己收工，这里是"房间先没了"的唯一补刀点。
-//
-// 它不会和 postGameEnded 互等：call 在 closing 关上之后立刻返回 ErrClosed。
+// 正常打完由对局自己收工（game.endGame 里的自退）；这里是"房间先没了"的唯一
+// 补刀点。不会和 postGameEnded 互等：call 在 closing 关上后立刻返回 ErrClosed。
 func (r *Room) stopGame() {
 	if g := r.games.Swap(nil); g != nil {
 		g.Close()
@@ -356,8 +346,7 @@ func (r *Room) stopGame() {
 
 // closeRoom 告诉房间里还剩下的人"这里没了"，然后销毁。
 //
-// 先广播再摘表：摘完之后 notify 还在，但没人会再给这个房间投指令了 ——
-// 剩下的人唯一能得到的解释就是这条事件。少了它，他们只会发现"发什么指令都不对劲"。
+// 先广播再摘表：摘完之后没人在这个房间里了，剩下的人唯一能得到的解释就是这条事件。
 func (r *Room) closeRoom(reason string) {
 	r.log.Info("关闭房间", "reason", reason)
 	r.broadcast(fact{typ: protocol.EventRoomClosed, data: roomClosed{

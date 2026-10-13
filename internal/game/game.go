@@ -61,8 +61,7 @@ type Game struct {
 	log     *slog.Logger
 	opt     Options
 
-	// stream 是**房间**的事件流（开局时传进来，不是对局自己造的）：
-	// 大厅事件与对局事件共用一条 seq，客户端才不用分辨自己在看哪条流。
+	// stream 是开局时传进来的**房间的**事件流，不是对局自己造的。
 	stream *protocol.Emitter
 
 	commands chan command
@@ -81,7 +80,6 @@ type Game struct {
 	honba        int
 	scores       [4]int
 	riichiSticks int
-	seq          int
 
 	wall     *mahjong.Wall
 	hands    [4]*mahjong.Hand
@@ -108,9 +106,7 @@ type Game struct {
 
 // New 开一场并起它的 goroutine。
 //
-// stream 是**房间的**事件流，不是新造一个：同一房间的大厅事件与对局事件要排在
-// 一条 seq 上（见 protocol.Emitter）。传 nil 会让事件全部丢失 —— 那是有意的，
-// 没有房间就没有事件流，不要在这里再兜一个。
+// stream 必须是**房间的**事件流（见 protocol.Emitter）；传 nil 时事件全部丢失。
 func New(players [4]Player, stream *protocol.Emitter, opt Options, log *slog.Logger) *Game {
 	if opt.Rounds == 0 {
 		opt.Rounds = defaultRoundsPerGame

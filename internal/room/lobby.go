@@ -53,9 +53,7 @@ func (r *Room) doLeave(userID int64) error {
 		return ErrNotInRoom
 	}
 
-	// 对局中离开算认输（协议 §5.2），而认输的后果和掉线超时一样：**关掉整个房间**。
-	// 麻将少一个人打不了，让剩下三家守着一个打不完的房间比起明确散伙更糟 ——
-	// 理由与 offline.go 里那条相同，两处要一起改。
+	// 对局中离开算认输（协议 §5.2），处置与掉线超时一样：关掉整个房间。
 	if r.phase == phasePlaying {
 		r.log.Info("对局中离开，认输关房", "seat", s, "userId", userID)
 		r.broadcast(fact{typ: protocol.EventRoomLeft, data: roomLeft{Seat: s}})
@@ -164,10 +162,7 @@ func (r *Room) allReady() bool {
 	return true
 }
 
-// refreshWho 重建"谁在这个房间"的只读快照（给 Hub.ByUser 用）。
-//
-// 座位表一变就调它。换座位的地方只有 doJoin 与 doLeave 两处，都走这里 ——
-// 漏一处，外面就会以为某个人还在（或不在）这个房间，而那不报错。
+// refreshWho 重建"谁在这个房间"的只读快照（给 Hub.ByUser 用）。座位表一变就调。
 func (r *Room) refreshWho() {
 	m := make(map[int64]struct{}, len(r.seats))
 	for _, s := range r.seats {

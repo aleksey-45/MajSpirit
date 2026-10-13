@@ -18,9 +18,7 @@ func collect() (*Emitter, func(int64) []Envelope) {
 
 // TestEmitNumbersEachRecipientSeparately 钉住"号按收件人各自连续"。
 //
-// 删掉它会漏掉：一条只发给某一个人的事件（room.joined / game.claimWindow /
-// game.snapshot）也去吃公共号 —— 别人虽然什么都没丢，却看到一个洞，
-// 于是照协议 §4.4 去拉快照。一局里每开一次鸣牌窗就多拉一次。
+// 删掉它会漏掉：只发给某些人的事件也去吃公共号，别人看到假洞。
 func TestEmitNumbersEachRecipientSeparately(t *testing.T) {
 	em, got := collect()
 
@@ -52,8 +50,7 @@ func TestEmitNumbersEachRecipientSeparately(t *testing.T) {
 
 // TestEmitReportsPerRecipientFailure 钉住返回值与收件人一一对应。
 //
-// 删掉它会漏掉：失败的位置错位（把第 2 个的错报成第 1 个），
-// 日志里就会指着一个没出问题的收件人说推送失败。
+// 删掉它会漏掉：失败的位置错位，日志指着一个没出问题的收件人说推送失败。
 func TestEmitReportsPerRecipientFailure(t *testing.T) {
 	boom := errors.New("写队列满")
 	em := NewEmitter(func(userID int64, _ Envelope) error {
@@ -87,12 +84,8 @@ func TestEmitReportsPerRecipientFailure(t *testing.T) {
 
 // TestEmitKeepsSeqOrderWhileSending 是那把锁的存在理由。
 //
-// 两个 actor（房间与对局）会同时往一条流里发。锁必须罩住"取号 + 投递"整段：
-// 只罩取号的话，第二个 Emit 会在第一个还没发完时就取到更大的号，于是
-// **后取的号先到**，同一个收件人这边就是一个假洞。
-//
-// 删掉这个用例（或把锁缩到只罩取号）会漏掉：上面那种乱序，而且它只在两个 actor
-// 同时发的时候出现 —— 平时跑一百遍都是绿的。
+// 删掉它（或把锁缩到只罩取号）会漏掉：两个发事件者并发时号序与到达序不一致，
+// 而它平时跑一百遍都是绿的。
 func TestEmitKeepsSeqOrderWhileSending(t *testing.T) {
 	reached := make(chan int, 2)
 	release := make(chan struct{})
