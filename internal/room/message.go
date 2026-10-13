@@ -44,3 +44,14 @@ type roomSeatVacated struct {
 	Seat   int    `json:"seat"`
 	Reason string `json:"reason"`
 }
+
+// roomClosed 广播给房间里还剩下的人：这个房间没了，回大厅去。
+//
+// 必须有一条明确的收尾事件。不发的话，剩下的人只会发现"发什么指令都不对劲"，
+// 而不知道房间已经不存在了 —— 那比房间解散本身更糟。
+//
+// reason 目前只有 "playerTimeout"（有人掉线、保座超时）。
+type roomClosed struct {
+	RoomID string `json:"roomId"`
+	Reason string `json:"reason"`
+}

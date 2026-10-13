@@ -50,6 +50,7 @@ const (
 	EventRoomReadyChanged Command = "room.readyChanged"
 	EventRoomLeft         Command = "room.left"
 	EventRoomSeatVacated  Command = "room.seatVacated"
+	EventRoomClosed       Command = "room.closed"
 )
 
 // ── 对局（协议 §5.3、§6.3~§6.9）──────────────────────────────────────

@@ -213,3 +213,17 @@ func (r *Room) destroyIfEmpty() {
 	r.hub.remove(r.id)
 	r.shutdown()
 }
+
+// closeRoom 告诉房间里还剩下的人"这里没了"，然后销毁。
+//
+// 先广播再摘表：摘完之后 notify 还在，但没人会再给这个房间投指令了 ——
+// 剩下的人唯一能得到的解释就是这条事件。少了它，他们只会发现"发什么指令都不对劲"。
+func (r *Room) closeRoom(reason string) {
+	r.log.Info("关闭房间", "reason", reason)
+	r.broadcast(fact{typ: protocol.EventRoomClosed, data: roomClosed{
+		RoomID: r.id,
+		Reason: reason,
+	}})
+	r.hub.remove(r.id)
+	r.shutdown()
+}

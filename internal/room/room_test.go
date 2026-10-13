@@ -243,10 +243,18 @@ func TestOwnerHandoverOnLeave(t *testing.T) {
 	}
 }
 
-// 掉线不能让位子当场没掉：120 秒内随时回来都还在原座（协议 §4.5）。
-func TestDisconnectHoldsSeatThenVacates(t *testing.T) {
-	_, r, n := newTestRoom(t, fastHold)
+// 掉线不能让位子当场没掉：120 秒内随时回来都还在原座（协议 §4.5）；
+// **过了窗口没回来就关掉整个房间**（2026-10-13 定的）。
+//
+// 为什么不是"释放座位、剩下三个人继续"：麻将少一个人就打不了，而我们还没有
+// 「中断对局 / 托管 / CPU 替打」那一套。让三个人守着一个打不了的房间，
+// 比明确告诉他们"这局散了"更糟。
+func TestDisconnectTimeoutClosesRoom(t *testing.T) {
+	h, r, n := newTestRoom(t, fastHold)
 	if err := r.Join(testUser(2, "乙")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Join(testUser(3, "丙")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,23 +273,44 @@ func TestDisconnectHoldsSeatThenVacates(t *testing.T) {
 		t.Error("保座窗口内座位就没了")
 	}
 
-	// 窗口过去：座位释放，广播 room.seatVacated。
+	// 等超时。
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := n.find(1, protocol.EventRoomSeatVacated); ok {
+		if _, ok := n.find(1, protocol.EventRoomClosed); ok {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	m, ok := n.find(1, protocol.EventRoomSeatVacated)
-	if !ok {
-		t.Fatal("保座超时没有释放座位")
-	}
-	if m["seat"] != float64(1) || m["reason"] != "timeout" {
+
+	// 先说是谁超时了，再说房间没了 —— 顺序反了的话剩下的人只知道"房间关了"。
+	if m, ok := n.find(1, protocol.EventRoomSeatVacated); !ok {
+		t.Error("没说是谁超时了")
+	} else if m["seat"] != float64(1) || m["reason"] != "timeout" {
 		t.Errorf("seatVacated = %v, 期望 seat 1 / reason timeout", m)
 	}
-	if s := latestSeat(t, n, 1, 1); s != nil {
-		t.Error("超时之后座位还占着")
+
+	m, ok := n.find(1, protocol.EventRoomClosed)
+	if !ok {
+		t.Fatal("保座超时没有关房")
+	}
+	if m["reason"] != reasonPlayerTimeout {
+		t.Errorf("room.closed.reason = %v, 期望 %s", m["reason"], reasonPlayerTimeout)
+	}
+	if m["roomId"] != r.ID() {
+		t.Errorf("room.closed.roomId = %v, 期望 %s", m["roomId"], r.ID())
+	}
+
+	// 还在座的那两个人也要收到 —— 他们才是需要知道"这局散了"的人。
+	if _, ok := n.find(3, protocol.EventRoomClosed); !ok {
+		t.Error("另一个在座的人没收到 room.closed")
+	}
+
+	// 摘表 + 关停：查不到，也投不进指令。
+	if _, ok := h.Lookup(r.ID()); ok {
+		t.Error("关了房还挂在 Hub 上")
+	}
+	if err := r.Join(testUser(4, "丁")); !errors.Is(err, ErrClosed) {
+		t.Errorf("往已关闭的房间投指令 = %v, 期望 ErrClosed", err)
 	}
 }
 

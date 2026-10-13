@@ -55,31 +55,34 @@ func (r *Room) attach(s int) error {
 	return nil
 }
 
-// evictExpired 释放保座超时的座位。
+// evictExpired 处理保座超时：**关掉整个房间**。
+//
+// 为什么不是"释放座位、剩下的三个人继续"（2026-10-13 改的）：麻将少一个人就打不了，
+// 而我们还没有「中断对局 / 托管 / CPU 替打」那一套。留三个人守着一个打不了的房间，
+// 比明确告诉他们"这局散了"更糟。
+//
+// 以后要做掉线续局时，改的是这里 —— 那时该做的是**冻结对局等人回来**，
+// 而不是把座位让给别人。
 func (r *Room) evictExpired() {
 	now := time.Now()
-	changed := false
-
 	for i, s := range r.seats {
 		if s == nil || s.connected || now.Before(s.offlineAt.Add(r.hold)) {
 			continue
 		}
-		r.log.Info("保座超时，释放座位", "seat", i, "userId", s.user.ID)
-		r.seats[i] = nil
-		changed = true
+		r.log.Info("保座超时，关闭房间", "seat", i, "userId", s.user.ID)
+		// 先说清是谁超时了，再说房间没了 —— 顺序反了的话，剩下的人只知道
+		// "房间关了"，不知道是因为谁。
 		r.broadcast(fact{typ: protocol.EventRoomSeatVacated, data: roomSeatVacated{
 			Seat:   i,
 			Reason: "timeout",
 		}})
-	}
-
-	if !changed {
+		r.closeRoom(reasonPlayerTimeout)
 		return
 	}
-	r.reowner()
-	r.broadcast(fact{typ: protocol.EventRoomSeats, data: roomSeats{Seats: r.seatStates()}})
-	r.destroyIfEmpty()
 }
+
+// reasonPlayerTimeout 是"有人掉线且没回来"这条关房理由（协议 §6.2 的 room.closed）。
+const reasonPlayerTimeout = "playerTimeout"
 
 // earliestOfflineDeadline 返回最早的保座到期时刻。
 func (r *Room) earliestOfflineDeadline() (time.Time, bool) {
