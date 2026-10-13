@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -600,38 +601,129 @@ func TestClosedKanDrawsRinshanAndRevealsDora(t *testing.T) {
 // 其余按一副完整的牌补足到 136 张。
 func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *mahjong.Wall {
 	t.Helper()
+	return rigWallBurned(t, hands, dealerDraw, 0)
+}
 
-	tiles := make([]mahjong.Tile, 0, mahjong.NumTiles)
+// rigWallBurned 同 rigWall，但在四家手牌**前面**垫 prefix 张废牌。
+//
+// 配合 `Wall.Burn(prefix)` 用：烧掉那 prefix 张之后，牌山刚好只剩这 52 张手牌 +
+// 庄家的第一摸。这是摆出"牌山只剩最后一张"的唯一办法 —— 一副牌每种恰好 4 张是
+// 硬约束，凑不出天然的短牌山，而海底摸月/河底捞鱼只在那个局面上成立。
+func rigWallBurned(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile, prefix int) *mahjong.Wall {
+	t.Helper()
+
+	// 先数清楚"四家手牌 + 庄家一摸"占了哪些牌，剩下的全是废牌。
 	var used mahjong.Counts
-	put := func(ts []mahjong.Tile) {
-		for _, x := range ts {
-			tiles = append(tiles, x)
-			used[x.Kind()]++
-		}
-	}
 	for seat := range hands {
 		if n := len(hands[seat]); n != mahjong.HandSize {
 			t.Fatalf("座位 %d 摆了 %d 张，应当 %d 张", seat, n, mahjong.HandSize)
 		}
-		put(hands[seat])
+		for _, x := range hands[seat] {
+			used[x.Kind()]++
+		}
 	}
-	put([]mahjong.Tile{dealerDraw})
+	used[dealerDraw.Kind()]++
 
-	// 剩下的位置用一副完整的牌补齐。这一步同时是校验：摆牌里某种牌超过 4 张时
-	// 补不出 136 张，NewWallFromTiles 会报出来。
+	var rest []mahjong.Tile
 	for _, x := range mahjong.FullSet() {
 		if used[x.Kind()] > 0 {
 			used[x.Kind()]--
 			continue
 		}
-		tiles = append(tiles, x)
+		rest = append(rest, x)
 	}
+	if prefix > len(rest) {
+		t.Fatalf("垫牌 %d 张，但只剩 %d 张废牌", prefix, len(rest))
+	}
+
+	// 布局：废牌 prefix 张 ‖ 四家手牌 ‖ 庄家的第一摸 ‖ 剩下的废牌。
+	// 末尾 14 张会被 NewWallFromTiles 切成王牌，所以它们不参与"可摸"。
+	tiles := make([]mahjong.Tile, 0, mahjong.NumTiles)
+	tiles = append(tiles, rest[:prefix]...)
+	for seat := range hands {
+		tiles = append(tiles, hands[seat]...)
+	}
+	tiles = append(tiles, dealerDraw)
+	tiles = append(tiles, rest[prefix:]...)
 
 	wall, err := mahjong.NewWallFromTiles(tiles)
 	if err != nil {
 		t.Fatalf("摆牌失败: %v", err)
 	}
 	return wall
+}
+
+// 海底摸月：牌山摸空的那一张自摸。
+//
+// 测它需要摆出"牌山只剩一张"的局面，而一副牌每种恰好 4 张是硬约束 —— 所以先
+// rigWallBurned 把手牌垫到第 70 张，再 Burn 掉前面的废牌。为了这个用例才加的
+// `Wall.Burn`，它不该出现在生产路径上。
+func TestHaiteiTsumo(t *testing.T) {
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("123m456m789p55p34s"),
+		mahjong.MustParseTiles("111222333444z6z"),
+		mahjong.MustParseTiles("777788889999m2z"),
+		mahjong.MustParseTiles("1111s22223333p7z"),
+	}
+	// 122 张可摸 − 52 张手牌 − 庄家这一摸 = 69 张要先烧掉。
+	wall := rigWallBurned(t, hands, mahjong.MustParseTiles("2s")[0], 69)
+	if got := wall.Burn(69); got != 69 {
+		t.Fatalf("烧掉 %d 张，期望 69 张", got)
+	}
+
+	g, n := newTestGame(t, Options{Rounds: 1, Wall: wall})
+	if err := g.DeclareWin(userOf(0)); err != nil {
+		t.Fatalf("海底自摸被拒: %v", err)
+	}
+
+	end, _ := n.find(userOf(0), protocol.EventGameRoundEnd)
+	win := end["wins"].([]any)[0].(map[string]any)
+
+	var names []string
+	for _, y := range win["yaku"].([]any) {
+		names = append(names, y.(map[string]any)["name"].(string))
+	}
+	if !slices.Contains(names, "海底摸月") {
+		t.Errorf("役 = %v，应当有海底摸月", names)
+	}
+	// 平和 + 门前清自摸和 + 海底摸月 = 3 翻 20 符（平和自摸固定 20 符）。
+	if win["han"] != float64(3) || win["fu"] != float64(20) {
+		t.Errorf("翻符 = %v 翻 %v 符, 期望 3 翻 20 符（役 %v）", win["han"], win["fu"], names)
+	}
+}
+
+// 河底捞鱼：牌山摸空之后打出的那一张被人荣和。
+func TestHouteiRon(t *testing.T) {
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("111222333444z5z"), // 庄家摸 8p 后打出去
+		mahjong.MustParseTiles("234m567m234s456s8p"),
+		mahjong.MustParseTiles("111188889999m6z"),
+		mahjong.MustParseTiles("1111s22223333p7z"),
+	}
+	eight := mahjong.MustParseTiles("8p")[0]
+	wall := rigWallBurned(t, hands, eight, 69)
+	wall.Burn(69)
+
+	g, n := newTestGame(t, Options{Rounds: 1, Wall: wall})
+	if err := g.Discard(userOf(0), eight); err != nil {
+		t.Fatalf("打牌失败: %v", err)
+	}
+	if err := g.DeclareWin(userOf(1)); err != nil {
+		t.Fatalf("河底荣和被拒: %v", err)
+	}
+
+	end, _ := n.find(userOf(1), protocol.EventGameRoundEnd)
+	win := end["wins"].([]any)[0].(map[string]any)
+	if win["loserSeat"] != float64(0) {
+		t.Errorf("loserSeat = %v, 期望 0", win["loserSeat"])
+	}
+	var names []string
+	for _, y := range win["yaku"].([]any) {
+		names = append(names, y.(map[string]any)["name"].(string))
+	}
+	if !slices.Contains(names, "河底捞鱼") {
+		t.Errorf("役 = %v，应当有河底捞鱼", names)
+	}
 }
 
 // discardDrawn 走一步：把当前行动者刚摸到的那张打出去。

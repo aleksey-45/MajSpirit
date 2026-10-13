@@ -232,3 +232,18 @@ func (w *Wall) Deal() ([4][]Tile, error) {
 	}
 	return hands, nil
 }
+
+// Burn 丢掉可摸牌山开头的 n 张，返回实际丢掉几张。
+//
+// 存在的理由只有一个：**测试要摆出"牌山只剩几张"的局面**。一副牌每种恰好 4 张是
+// 硬约束（NewWallFromTiles 会校验），所以摆不出天然的短牌山；而海底摸月、河底捞鱼
+// 这两个役只在"牌山摸空的那一张"上成立，不摆出那个局面就永远验不到。
+//
+// 生产代码不该调它：真牌局的牌是洗出来的，不是烧出来的。
+func (w *Wall) Burn(n int) int {
+	if n > len(w.live) {
+		n = len(w.live)
+	}
+	w.live = w.live[n:]
+	return n
+}
