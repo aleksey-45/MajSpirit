@@ -30,20 +30,37 @@ func (f *fakeAuth) Authenticate(context.Context, string) (user.User, error) {
 	return f.u, f.err
 }
 
-// newTestServer 起一个真的 HTTP 服务端（端口随机），并把认证超时压到很短。
-//
-// 端口随机 + 生命周期跟着测试走：go test ./... 既不会撞"端口被占"，
-// 也不需要谁先手动把服务端起起来。
+// newTestServer 起一个真的 HTTP 服务端（端口随机），认证超时压到很短。
+// 心跳用默认值（15s/5s）：大多数用例几毫秒就结束，触发不到 ping。
 func newTestServer(t *testing.T, auth Authenticator, timeout time.Duration) string {
+	t.Helper()
+	return newTestServerWithHeartbeat(t, auth, timeout, pingInterval, pongTimeout)
+}
+
+// newTestServerWithHeartbeat 同上，但心跳间隔可配（心跳用例不能真等 15 秒）。
+func newTestServerWithHeartbeat(t *testing.T, auth Authenticator, timeout, pingEvery, pongWait time.Duration) string {
 	t.Helper()
 
 	h := NewHandler(auth)
 	h.timeout = timeout
+	h.pingEvery = pingEvery
+	h.pongWait = pongWait
 
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
 	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+// writeAuth 发一条 auth 指令。
+func writeAuth(t *testing.T, ctx context.Context, c *websocket.Conn, token string) {
+	t.Helper()
+	if err := wsjson.Write(ctx, c, Envelope{
+		Type: CmdAuth,
+		Data: json.RawMessage(`{"token":"` + token + `"}`),
+	}); err != nil {
+		t.Fatalf("发 auth 失败: %v", err)
+	}
 }
 
 // mustDial 连上测试服务端。
@@ -86,12 +103,7 @@ func TestAuthRejectsBadToken(t *testing.T) {
 		t.Fatalf("第一条应该是 hello, 实际 %q", env.Type)
 	}
 
-	if err := wsjson.Write(ctx, c, Envelope{
-		Type: CmdAuth,
-		Data: json.RawMessage(`{"token":"坏票"}`),
-	}); err != nil {
-		t.Fatalf("发 auth 失败: %v", err)
-	}
+	writeAuth(t, ctx, c, "坏票")
 
 	env, _ := readEnvelope(t, ctx, c)
 	if env.Type != EventError {
@@ -128,12 +140,7 @@ func TestAuthAcceptsGoodToken(t *testing.T) {
 
 	readEnvelope(t, ctx, c) // hello
 
-	if err := wsjson.Write(ctx, c, Envelope{
-		Type: CmdAuth,
-		Data: json.RawMessage(`{"token":"好票"}`),
-	}); err != nil {
-		t.Fatalf("发 auth 失败: %v", err)
-	}
+	writeAuth(t, ctx, c, "好票")
 
 	env, _ := readEnvelope(t, ctx, c)
 	if env.Type != EventAuthed {
@@ -253,4 +260,18 @@ func findLog(lines []string, substr string) string {
 		}
 	}
 	return ""
+}
+
+// readEnvelopeOrErr 和 readEnvelope 一样，但把读错误交给调用方 ——
+// 需要"读到连接关闭为止"的用例（心跳超时）用它。
+func readEnvelopeOrErr(ctx context.Context, c *websocket.Conn) (Envelope, error) {
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		return Envelope{}, err
+	}
+	var env Envelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return Envelope{}, err
+	}
+	return env, nil
 }

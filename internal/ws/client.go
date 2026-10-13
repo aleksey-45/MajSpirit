@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -15,99 +16,87 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-// 写路径上的时限。
 const (
-	// writeTimeout 是单条消息的写入上限。
-	//
-	// 一个不读的客户端会把 TCP 发送缓冲区填满，此后 Write 一直阻塞。
-	// 库的写超时只让**这次写失败**（setupWriteTimeout 不关连接，跟读超时相反），
-	// 所以失败后由我们自己关 —— 一个写不进去的连接留着没意义。
+	// 不读的客户端会填满发送缓冲区，此后 Write 一直阻塞。
+	// 库的写超时只让这次写失败（setupWriteTimeout 不关连接，跟读超时相反），
+	// 所以失败后由我们关连接。
 	writeTimeout = 10 * time.Second
 
-	// sendTimeout 是 Send 等待写 goroutine 取走消息的上限。
-	// send channel 满说明对端消费不过来，等下去会把调用它的 goroutine 一起拖住。
 	sendTimeout = 10 * time.Second
 
-	// closeWait 是 Close 等待"关闭帧已发出"的上限。超过就硬断 ——
-	// 宁可对端收不到关闭原因，也不能让 handler 卡在这里不返回。
+	// Close 等"写 goroutine 处理完关闭"的上限，超过就硬断。
 	closeWait = 2 * time.Second
+
+	// 单独给"发出关闭帧"这一步的上限：它不能被对端的回复拖住。
+	closeFrameWait = 200 * time.Millisecond
 )
 
-// Client 是一条已认证的连接。
-//
-// 它收拢三个 goroutine（读、写、心跳）共用的那批状态：写入口、关闭信号、
-// 只关一次的保证。没有这个名字，这些状态就得在 ServeHTTP 里当局部变量
-// 逐个传给每个 goroutine。
-//
-// 名字避开 Conn：coder/websocket 已有一个导出类型叫 Conn，同包里再用
-// ws.Conn 会让读代码的人反复分辨说的是哪个。
+// Client 是一条已认证的连接，收拢读、写、心跳三个 goroutine 共用的状态。
+// 名字避开 Conn：coder/websocket 已有一个导出类型叫 Conn。
 type Client struct {
 	ws   *websocket.Conn
 	auth Authenticator
 	log  *slog.Logger
 
-	// send 是唯一的写入口。任何 goroutine 想发消息都得走 Send。
+	// 唯一的写入口。
 	send chan Envelope
 
-	// done 关闭后：Send 立刻返回错误，写循环与心跳退出。
-	// 用关闭而不是逐个发信号 —— "已关闭"是广播语义。
+	// 关闭后：Send 返回错误，写循环与心跳退出。
 	done chan struct{}
 
-	// closeOnce 保证 done 只关一次；重复 close(channel) 会 panic。
+	// 心跳的回执：读循环读到 pong 消息时投一下，唤醒正在等的心跳。
+	pong chan struct{}
+
+	// 关闭有四个触发点，而重复 close(channel) 会 panic。
 	closeOnce sync.Once
 
-	// writeClosed 由写 goroutine 发完关闭帧后关闭。Close 等它，
+	// 写 goroutine 发完关闭帧后关闭：Close 要等它，
 	// 否则调用方的 defer CloseNow 会把还没出门的关闭帧一起掐掉。
 	writeClosed chan struct{}
 
-	// writeStarted 标出写 goroutine 是否起过。没起过就别等 writeClosed，
-	// 那只会等满超时（测试里直接构造 Client 的场景）。
+	// 写 goroutine 起过没有。没起过就不能等 writeClosed。
 	writeStarted atomic.Bool
 
-	// authTimeout 是连上后必须完成认证的时限（协议 §4.1）。
-	// 做成字段而不是直接引用常量，唯一原因是测试：真等 5 秒会把套件拖慢。
+	// 认证时限（协议 §4.1）。做成字段是为了测试能缩短它。
 	authTimeout time.Duration
 
-	// closeMu 保护下面两个字段：Close 在这里记下"要发什么关闭帧"，
-	// 真正的写入由写 goroutine 在排空队列之后执行。
+	// 心跳间隔与等 pong 的时限（协议 §4.3）。同样是字段：测试不能真等 15 秒。
+	pingEvery time.Duration
+	pongWait  time.Duration
+
+	// Close 在这里记下要发的关闭帧，实际写入由写 goroutine 在排空队列后做。
 	closeMu     sync.Mutex
 	closeCode   websocket.StatusCode
 	closeReason string
 
-	// user 在认证成功后填上。只在 handler 的主 goroutine 里读写，
-	// 所以不需要同步。
+	// 认证成功后填上，只由 handler 的主 goroutine 读写。
 	user user.User
 }
 
 func newClient(c *websocket.Conn, auth Authenticator, log *slog.Logger) *Client {
 	return &Client{
-		ws:   c,
-		auth: auth,
-		log:  log,
-		// 缓冲：投递方（将来是房间的 goroutine）不该为了等一次网络写而阻塞。
-		send:        make(chan Envelope, 32),
+		ws:          c,
+		auth:        auth,
+		log:         log,
+		send:        make(chan Envelope, 32), // 缓冲：投递方不该为了等一次网络写而阻塞
 		done:        make(chan struct{}),
+		pong:        make(chan struct{}, 1),
 		writeClosed: make(chan struct{}),
 		authTimeout: authTimeout,
+		pingEvery:   pingInterval,
+		pongWait:    pongTimeout,
 	}
 }
 
-// startWriter 起写 goroutine。它必须先于任何 Close 调用，
-// 否则 Close 没东西可等（writeStarted 为假）。
+// startWriter 起写 goroutine，必须先于任何 Close（否则 Close 等不到东西）。
 func (c *Client) startWriter(ctx context.Context) {
 	c.writeStarted.Store(true)
 	go c.writeLoop(ctx)
 }
 
-// Send 把一条消息交给写 goroutine。
-//
-// 两种失败都返回错误而不是静默处理：
-//   - done 已关闭 → net.ErrClosed；
-//   - channel 满（对端消费不过来）→ context.DeadlineExceeded。
-//
-// 满了**不丢弃**：协议 §1.4 的事件带 seq，客户端靠连续性检测丢消息。
-// 静默丢一条会让客户端进入一个它自己都没觉察的错状态，比断开重连糟得多。
-// 也不无限等待：投递方将来是房间的 goroutine，用一局牌去等一个慢客户端不划算。
+// Send 把一条消息交给写 goroutine。满了不丢弃也不无限等：
+// 静默丢一条会让客户端的 seq 出现看不见的洞（协议 §1.4），
+// 无限等会拖住投递方。
 func (c *Client) Send(env Envelope) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
@@ -124,14 +113,9 @@ func (c *Client) Send(env Envelope) error {
 
 // Close 幂等：广播关闭，等写 goroutine 发完关闭帧，再断开。
 //
-// 关闭帧记在 c.closeCode 上、由写 goroutine 发出，而不是在这里直写：
-// 直写会让它插到已排队的消息前面（客户端先收到关闭帧、排在后面的 error
-// 被随后的 CloseNow 掐掉）。
-//
-// 返回前必须等关闭帧真正发出去。不等的话调用方的 defer CloseNow 会立刻
-// 掐掉 socket，客户端读到的是 EOF 而不是关闭码。
-//
-// code 传 0 表示不发关闭帧（对端已经断开时再发一个没意义）。
+// 关闭帧由写 goroutine 发（直写会插到已排队的消息前面）；
+// 返回前要等它发完，否则调用方的 defer CloseNow 会把帧一起掐掉。
+// code 传 0 表示不发关闭帧。
 func (c *Client) Close(code websocket.StatusCode, reason string) {
 	c.closeOnce.Do(func() {
 		c.closeMu.Lock()
@@ -140,10 +124,6 @@ func (c *Client) Close(code websocket.StatusCode, reason string) {
 		close(c.done)
 	})
 
-	if !c.writeStarted.Load() {
-		// 写 goroutine 没起过（测试直接构造 Client），没人会关 writeClosed。
-		return
-	}
 	select {
 	case <-c.writeClosed:
 	case <-time.After(closeWait):
@@ -152,19 +132,16 @@ func (c *Client) Close(code websocket.StatusCode, reason string) {
 	}
 }
 
-// writeLoop 是唯一碰 wsjson.Write 的 goroutine。
-//
-// 所有出站消息都经它，所以帧不会交错、顺序就是 Send 的顺序，
-// 关闭帧排在队尾 —— "先给答案、再关门"是结构性的，不靠时序碰巧。
+// writeLoop 是唯一碰 wsjson.Write 的 goroutine：帧不会交错，顺序即 Send 的顺序，
+// 关闭帧排在队尾。
 func (c *Client) writeLoop(ctx context.Context) {
-	// 任何退出路径都要发关闭帧并放 Close 走，少一条就有人等满超时。
+	// 任何退出路径都要发关闭帧并放 Close 走。
 	defer func() {
 		c.finishClose()
 		close(c.writeClosed)
 	}()
 
-	// WithoutCancel 保留父 ctx 上的值、剥掉取消信号，再加写超时。
-	// 直接用 Background 会丢掉父 ctx 上的值。
+	// WithoutCancel 保留父 ctx 的值、剥掉取消信号，再加写超时。
 	write := func(env Envelope) bool {
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
 		defer cancel()
@@ -185,7 +162,7 @@ func (c *Client) writeLoop(ctx context.Context) {
 				return
 			}
 		case <-c.done:
-			// 先把已经排队的消息发完（顺序不能丢），再让 defer 收尾。
+			// 先把排队的消息发完，再让 defer 收尾。
 			for {
 				select {
 				case env := <-c.send:
@@ -200,19 +177,29 @@ func (c *Client) writeLoop(ctx context.Context) {
 	}
 }
 
-// finishClose 由写 goroutine 调：发关闭帧再断开。
+// finishClose 由写 goroutine 调：发关闭帧，然后断开。
 //
-// 这里可以直接用库的 Close（它内部写控制帧）：能走到这里的一定是写 goroutine，
-// 而且队列已经排空，所以此刻没有别的写者 —— 单写者约定没被破坏。
+// 这里用库的 Close（它写完帧会等对端回关闭回复），但只等一个很短的上限：
+// 那个等待要拿读锁，而读循环正持有它等数据 —— 干等会把关闭流程卡死
+// （实测：心跳超时之后 2 秒内没有任何后续动作）。
+//
+// 也不能先 CloseNow 再发帧：socket 一关帧就写不出去，客户端只看到 EOF。
+// 写帧本身不碰读锁，所以"先发、短等、再硬断"是唯一既保帧又不卡死的顺序。
 func (c *Client) finishClose() {
 	c.closeMu.Lock()
 	code, reason := c.closeCode, c.closeReason
 	c.closeMu.Unlock()
 
 	if code != 0 {
-		// 库的 Close 会等对端回关闭帧（最多 5 秒）。等它是值得的：
-		// 收到回帧才说明关闭码真的到了对面，而不是丢在半路。
-		_ = c.ws.Close(code, reason)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = c.ws.Close(code, reason)
+		}()
+		select {
+		case <-done:
+		case <-time.After(closeFrameWait):
+		}
 	}
 	_ = c.ws.CloseNow()
 }
@@ -221,21 +208,17 @@ func (c *Client) finishClose() {
 //
 // 返回非 nil 时连接已经被关掉（并给了对端关闭码），调用方直接返回即可。
 //
-// 超时不交给"带截止时间的 ctx 去读"，而是用显式定时器与读并发等：
+// 超时用显式定时器与读并发等，不交给带截止时间的 ctx：
 // coder/websocket 的 setupReadTimeout（conn.go:187）在读的 ctx 到期时会顺手
 // c.close() 关掉整条连接，而 writeFrame 里有一段
 //
 //	if c.isClosed() && opcode == opClose { err = nil }
 //
-// 于是随后的关闭帧既不写、又返回 nil —— 客户端只看到 EOF、CloseStatus 是 -1，
-// 而协议 §4.1 要求 4401。auth_wire_test.go 用裸字节能看出这个差别。
+// 于是关闭帧既不写、又返回 nil，客户端只拿到 EOF 而不是协议 §4.1 要的 4401。
 func (c *Client) authLoop(ctx context.Context, session string) error {
-	// 读用 Background：带取消的 ctx 一旦被取消，库会连连接一起关掉。
-	// 超时由下面的定时器负责，连接的生命周期交回这里管。
 	readCtx := context.Background()
 
-	// hello 是协议 §4.1 时序里的第一条，必须无条件先发 —— 客户端靠它拿
-	// protocolVersion / serverTime / sessionId，也靠它判断"连上了"。
+	// hello 是协议 §4.1 时序里的第一条，无条件先发。
 	if err := c.Send(Envelope{
 		Type: EventHello,
 		Data: mustJSON(hello{
@@ -250,8 +233,8 @@ func (c *Client) authLoop(ctx context.Context, session string) error {
 
 	deadline := time.After(c.authTimeout)
 
-	// 一次只跑一个读（库不允许并发 Read）。超时后这个 goroutine 会一直挂在读上，
-	// 直到 Close 把连接真正断开（Close 会唤醒它）—— 所以不能每轮循环都新起一个。
+	// 库不允许并发 Read，所以一次只跑一个读。挂住的读由 Close 唤醒，
+	// 因此不能每轮循环都新起一个（会越漏越多）。
 	type readResult struct {
 		env Envelope
 		err error
@@ -268,24 +251,20 @@ func (c *Client) authLoop(ctx context.Context, session string) error {
 	for {
 		select {
 		case <-deadline:
-			// 到点了，连接还是活的 —— 关闭帧发得出去。
 			c.log.Info("认证超时")
 			c.Close(statusAuthFailed, "认证超时")
 			return context.DeadlineExceeded
 
 		case r := <-reads:
 			if r.err != nil {
-				// 客户端正常关闭也走这条。绝不能把它记成"认证超时"，
-				// 否则日志里全是假信号，真的超时反而看不出来。
-				// code 传 0：连接已经断了，再发关闭帧没意义。
+				// 客户端正常关闭也走这条，不能记成"认证超时"。
 				c.Close(0, "")
 				return r.err
 			}
 
 			if r.env.Type != CmdAuth {
-				// 认证前发别的：回 AUTH_REQUIRED，但连接留着 —— 他还有时间正确认证。
-				// 直接关掉的话，一个把 auth 排在别的消息后面的客户端就永远进不来，
-				// 而协议只要求"拒绝"，没要求"断开"。
+				// 回 AUTH_REQUIRED 但不断开：协议只要求"拒绝"。
+				// 断开的话，把 auth 排在别的消息后面的客户端就永远进不来。
 				if err := c.Send(Envelope{
 					Type: EventError,
 					Data: mustJSON(errorEvent{
@@ -325,13 +304,11 @@ func (c *Client) authLoop(ctx context.Context, session string) error {
 	}
 }
 
-// authenticate 验票。用假实现就能测"错票必须 4401"，不必造真 JWT（见 Authenticator）。
+// authenticate 验票：错票与库故障对客户端都是 AUTH_FAILED + 4401
+// （两者的处置动作相同：重新登录），细节只进日志。
 func (c *Client) authenticate(ctx context.Context, token string) (user.User, error) {
 	u, err := c.auth.Authenticate(ctx, token)
 	if err != nil {
-		// 日志里分得清是票坏了还是库挂了（排查要这个），但发给客户端的只有一个答案：
-		// 客户端对这两种情况的处置是同一个动作 —— 重新登录。
-		// 所以不造第二个错误码，也别把库的错误细节发出去。
 		c.log.Info("认证失败", "err", err)
 		_ = c.Send(Envelope{
 			Type: EventError,
@@ -347,40 +324,49 @@ func (c *Client) authenticate(ctx context.Context, token string) (user.User, err
 	return u, nil
 }
 
-// readLoop 读已认证连接上的指令。
+// readLoop 读已认证连接上的指令。用 Background 的 ctx：带取消的 ctx 一旦被取消，
+// 库会顺带关掉连接；连接的生命周期由 Close 和心跳负责。
 //
-// 用 Background 的 ctx：带取消的 ctx 一旦被取消，库会顺带关掉连接。
-// 连接的生命周期由 Close 和心跳负责，不靠 ctx。
+// 读失败分两种：对端不守协议（回 4400 把原因告诉它），以及对端断开了
+// （连接已经没了，发关闭帧没意义，code 传 0）。
 func (c *Client) readLoop() {
 	readCtx := context.Background()
 
 	for {
 		env, data, err := readCommand(readCtx, c.ws)
 		if err != nil {
-			// 客户端关页面、网线拔了都走这里，属于正常结束。
 			c.log.Info("读取结束", "err", err)
+			if errors.Is(err, errProtocol) {
+				c.Close(statusProtocolError, "协议错误")
+				return
+			}
 			c.Close(0, "")
 			return
 		}
-		// 指令的分派留给后续步骤（房间层）。现在只记下来。
+		// 心跳的回执：读到 pong 就把等待唤醒。
+		if env.Type == EventPong {
+			select {
+			case c.pong <- struct{}{}:
+			default:
+			}
+			continue
+		}
+		// 其余指令的分派留给后续步骤（房间层）。现在只记下来。
 		c.log.Info("收到指令", "type", string(env.Type), "data", string(data))
 	}
 }
 
-// writeLoop 是唯一碰 wsjson.Write 的 goroutine。
+// heartbeat 按协议 §4.3 发应用层 ping 消息，等对端的 pong 消息。
 //
-// heartbeat 定时发控制帧 ping 并等 pong（协议 §4.3）。
+// 不用库的传输层 Ping：它在超时那一刻会把整条连接关掉（setupWriteTimeout 的
+// c.close()），于是"超时 → 发 4408 关闭帧"这条路上的帧根本没地方写；
+// 而且它绕过写 goroutine，等于多了一个写者。应用层 ping 走 Send，
+// 和其它消息共用一条写路径，超时也只影响这一次等待。
 //
-// Ping 自己不读连接，它等的是读 goroutine 把 pong 读出来（库的注释里写着
-// "must be called concurrently with Reader"）。所以这里失败有两种可能：
-// 对端没回，或者读 goroutine 先退出了 —— 两种都该关连接，日志里靠读循环
-// 那条"读取结束"区分。
-//
-// 超时**一次就关**：Ping 失败意味着对端已经 pingInterval+pongTimeout 这么久
-// 没有任何响应。再等一轮换不来任何判断力。协议 §4.3 那句"连续两次未回 pong"
-// 是指标不是义务 —— 这条差异要写回协议。
+// 一次不回就关：此时对端已经 pingEvery+pongWait 没有响应。
+// 协议 §4.3 写的是"连续两次未回 pong"，实现取一次。
 func (c *Client) heartbeat(ctx context.Context) {
-	t := time.NewTicker(pingInterval)
+	t := time.NewTicker(c.pingEvery)
 	defer t.Stop()
 
 	for {
@@ -390,11 +376,21 @@ func (c *Client) heartbeat(ctx context.Context) {
 		case <-c.done:
 			return
 		case <-t.C:
-			pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pongTimeout)
-			err := c.ws.Ping(pctx)
-			cancel()
-			if err != nil {
-				c.log.Info("心跳失败", "err", err)
+			if err := c.Send(Envelope{
+				Type: EventPing,
+				Data: mustJSON(pingEvent{ServerTime: time.Now().UnixMilli()}),
+			}); err != nil {
+				return // 连接已经在关了
+			}
+
+			select {
+			case <-c.pong:
+			case <-c.done:
+				return
+			case <-ctx.Done():
+				return
+			case <-time.After(c.pongWait):
+				c.log.Info("心跳超时")
 				c.Close(statusHeartbeatTimeout, "心跳超时")
 				return
 			}
@@ -402,29 +398,28 @@ func (c *Client) heartbeat(ctx context.Context) {
 	}
 }
 
+// errProtocol 标记"对端发的东西不守协议"，调用方据此回 4400 而不是静默断开。
+var errProtocol = errors.New("协议错误")
+
 // readCommand 读一条消息并解出信封，顺带把原始字节还给调用方（现在只用于日志）。
-//
-// 只收文本帧：协议 §2.1 定的是 JSON，二进制帧在这个协议里没有位置，
-// 放行的话等于给"用另一种编码绕过协议"开口子。
+// 只收文本帧：协议 §2.1 定的是 JSON。
 func readCommand(ctx context.Context, c *websocket.Conn) (Envelope, []byte, error) {
 	typ, data, err := c.Read(ctx)
 	if err != nil {
 		return Envelope{}, nil, err
 	}
 	if typ != websocket.MessageText {
-		return Envelope{}, data, fmt.Errorf("收到非文本帧: %v", typ)
+		return Envelope{}, data, fmt.Errorf("%w: 收到非文本帧 %v", errProtocol, typ)
 	}
 
 	var env Envelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return Envelope{}, data, fmt.Errorf("解析信封: %w", err)
+		return Envelope{}, data, fmt.Errorf("%w: 解析信封: %v", errProtocol, err)
 	}
 	return env, data, nil
 }
 
-// mustJSON 编码信封里的 data。传进去的都是自家定义的结构体，
-// 编码失败说明类型写错了（比如塞了个 channel），那是程序 bug 不是可恢复的运行时错误，
-// 所以 panic 而不是让每个调用点都多一个 error 分支。
+// mustJSON 编码信封里的 data。编码失败说明塞了个不能编码的类型，是程序 bug。
 func mustJSON(payload any) json.RawMessage {
 	raw, err := json.Marshal(payload)
 	if err != nil {

@@ -10,7 +10,6 @@ import (
 
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 )
 
 // TestReadLimitRejectsOversizedMessage 守住"超大消息按 1009 关连接"。
@@ -25,12 +24,7 @@ func TestReadLimitRejectsOversizedMessage(t *testing.T) {
 	c := mustDial(t, ctx, url)
 
 	readEnvelope(t, ctx, c) // hello
-	if err := wsjson.Write(ctx, c, Envelope{
-		Type: CmdAuth,
-		Data: json.RawMessage(`{"token":"好票"}`),
-	}); err != nil {
-		t.Fatalf("发 auth 失败: %v", err)
-	}
+	writeAuth(t, ctx, c, "好票")
 	if env, _ := readEnvelope(t, ctx, c); env.Type != EventAuthed {
 		t.Fatalf("期望 authed, 实际 %q", env.Type)
 	}
@@ -65,12 +59,7 @@ func TestErrorFramePrecedesCloseFrame(t *testing.T) {
 	c := mustDial(t, ctx, url)
 
 	readEnvelope(t, ctx, c) // hello
-	if err := wsjson.Write(ctx, c, Envelope{
-		Type: CmdAuth,
-		Data: json.RawMessage(`{"token":"坏票"}`),
-	}); err != nil {
-		t.Fatalf("发 auth 失败: %v", err)
-	}
+	writeAuth(t, ctx, c, "坏票")
 
 	// ① error 帧必须在关闭帧之前到达。
 	env, _ := readEnvelope(t, ctx, c)

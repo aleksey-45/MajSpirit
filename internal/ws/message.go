@@ -8,6 +8,16 @@ type hello struct {
 	SessionID       string `json:"sessionId"`
 }
 
+// pingEvent / pongEvent 是心跳消息（协议 §4.3、§6.1）。
+// 带 serverTime 是为了让客户端能校准倒计时（协议 §2.4）。
+type pingEvent struct {
+	ServerTime int64 `json:"serverTime"`
+}
+
+type pongEvent struct {
+	ServerTime int64 `json:"serverTime"`
+}
+
 // 错误码是给机器看的标识，message 才是给人看的（协议 §2.6）。
 type ErrorCode string
 
