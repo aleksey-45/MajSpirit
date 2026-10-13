@@ -624,6 +624,15 @@ func rigWallBurned(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Til
 	}
 	used[dealerDraw.Kind()]++
 
+	// 先自己查一遍"每种不超过 4 张"。不查的话，超出的那几张在补牌阶段找不到可跳过的，
+	// 报出来的是 NewWallFromTiles 的"牌山需要 136 张，实际 137 张" —— 看不出是哪种牌。
+	// 摆牌时踩过三次，每次都要数一遍才知道是 7m 多了。
+	for k, n := range used {
+		if n > 4 {
+			t.Fatalf("摆牌里 %s 有 %d 张，一副牌只有 4 张", mahjong.Tile(k), n)
+		}
+	}
+
 	var rest []mahjong.Tile
 	for _, x := range mahjong.FullSet() {
 		if used[x.Kind()] > 0 {
@@ -765,6 +774,68 @@ func TestPaoIsNotedAtTheMeldThatCompletesIt(t *testing.T) {
 	// 别人没碰过大三元，就没有责任者。
 	if got := g.paoSeatOf(2); got != mahjong.NoSeat {
 		t.Errorf("座位 2 不该有责任者：%d", got)
+	}
+}
+
+// 立直的三件事一起验：宣言（含供托）、手牌锁定、里宝进算分。
+//
+// 分开验会漏掉它们之间的联系 —— 供托扣了但没进 riichiSticks、锁定了却还把
+// IsRiichi 传成 false，这两种错各自"看起来都对"。
+func TestRiichiDeclarationLockAndUra(t *testing.T) {
+	// 庄家 13 张：打掉 8p 之后听 3s/6s（234m567m234s456s + 8p）。
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("234m567m234s456s8p"),
+		mahjong.MustParseTiles("111222333444z6z"),
+		mahjong.MustParseTiles("111188889999m2z"),
+		mahjong.MustParseTiles("1111s22223333p7z"),
+	}
+	g, n := newTestGame(t, Options{
+		Rounds: 1,
+		Wall:   rigWall(t, hands, mahjong.MustParseTiles("1z")[0]),
+	})
+
+	if err := g.Riichi(userOf(0), mahjong.MustParseTiles("8p")[0]); err != nil {
+		t.Fatalf("立直被拒: %v", err)
+	}
+
+	if _, ok := n.find(userOf(0), protocol.EventGameRiichi); !ok {
+		t.Error("没有 game.riichi 事件")
+	}
+	stick, ok := n.find(userOf(0), protocol.EventGameRiichiStick)
+	if !ok {
+		t.Fatal("没有 game.riichiStick 事件")
+	}
+	if stick["sticks"] != float64(1) || stick["seat"] != float64(0) {
+		t.Errorf("riichiStick = %v, 期望 sticks 1 / seat 0", stick)
+	}
+	// 供托是**从分数里扣出去的**，不是凭空记一笔。
+	started, _ := n.find(userOf(0), protocol.EventGameStarted)
+	if started["scores"].([]any)[0] != float64(25000) {
+		t.Fatalf("开局分数 = %v", started["scores"])
+	}
+
+	// 手牌锁定：轮到自己的时候再想换一张就不行了。
+	// （这时窗口/回合已经交出去，所以先拿"直接调 doDiscard"这条路验。）
+	if err := g.Discard(userOf(0), mahjong.MustParseTiles("2s")[0]); err == nil {
+		t.Error("立直之后不是摸切，却允许了打牌")
+	}
+
+	// 里宝只该在立直时进算分。规则层看 IsRiichi，所以这里直接验那一层输入。
+	in := g.winInput(0, mahjong.MustParseTiles("3s")[0], false)
+	if !in.IsRiichi {
+		t.Error("立直了，winInput.IsRiichi 却是 false —— 里宝会漏算")
+	}
+	if len(in.UraIndicators) == 0 {
+		t.Error("立直和牌应当揭示里宝指示牌")
+	}
+	// 没立直的人不该拿到里宝。
+	in2 := g.winInput(1, mahjong.MustParseTiles("3s")[0], false)
+	if in2.IsRiichi {
+		t.Error("座位 1 没立直，IsRiichi 却是 true")
+	}
+	// 供托要传给规则层，否则和牌者收不到那 1000 点。
+	if in.RiichiSticks != 1 {
+		t.Errorf("RiichiSticks = %d，期望 1", in.RiichiSticks)
 	}
 }
 

@@ -21,3 +21,13 @@ var ErrNoClaim = errors.New("现在没有可以鸣的牌")
 
 // ErrMaxKan 表示杠数到了上限（四个）。这是规则上限，不是牌山不够。
 var ErrMaxKan = errors.New("杠数已达上限")
+
+// 立直（规则集 §3）：
+var (
+	ErrAlreadyRiichi = errors.New("已经立直了")
+	ErrNotMenzen     = errors.New("副露过就不能立直")
+	ErrNotTenpai     = errors.New("打掉这张就不听牌了")
+	ErrNoPoints      = errors.New("点数不够供托")
+	ErrWallTooShort  = errors.New("牌山剩得不够立直")
+	ErrRiichiLocked  = errors.New("立直之后只能摸切")
+)

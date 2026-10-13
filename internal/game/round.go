@@ -94,6 +94,19 @@ func (g *Game) doDiscard(userID int64, t mahjong.Tile) error {
 	if seat != g.turn || !g.awaitingDiscard {
 		return ErrNotYourTurn
 	}
+	// 立直之后手牌锁定：只能摸切（规则集 §3.3）。
+	//
+	// 判据是"打的是不是刚摸的那张"，而不是"这张牌还在不在自己的听牌形里" ——
+	// 后者要重算听牌，而且会放行"换一张听牌张"这种实际会后悔的走法。
+	if g.riichi[seat] && t != g.lastDrawn {
+		return ErrRiichiLocked
+	}
+	return g.discardTile(seat, t)
+}
+
+// discardTile 是打牌的公共路径。**不做回合与立直的校验** —— 那两个判断在 doDiscard
+// 里，而宣言立直的那张牌恰好要绕过"只能摸切"（它是宣言的一部分）。
+func (g *Game) discardTile(seat int, t mahjong.Tile) error {
 	if err := g.hands[seat].Remove(t); err != nil {
 		return ErrNotHolding
 	}
@@ -106,6 +119,7 @@ func (g *Game) doDiscard(userID int64, t mahjong.Tile) error {
 		Seat:      seat,
 		Tile:      formatTile(t),
 		Tsumogiri: g.drawn && t == g.lastDrawn,
+		Riichi:    g.riichi[seat],
 		Remaining: g.wall.Remaining(),
 	}})
 

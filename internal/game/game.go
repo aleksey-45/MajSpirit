@@ -98,6 +98,8 @@ type Game struct {
 	rinshanDraw bool
 	// pao 是帕奥责任者（规则集 §8.5）。必须记在**鸣牌那一刻**，见 pao.go。
 	pao [4]*paoInfo
+	// riichi 是已经宣告立直的座位（规则集 §3）。手牌从此锁定。
+	riichi [4]bool
 }
 
 // New 开一场并起它的 goroutine。
@@ -200,6 +202,11 @@ func (g *Game) Pon(userID int64) error {
 	return g.call(command{kind: cmdPon, id: userID})
 }
 
+// Riichi 是 game.riichi：宣告立直，同时把宣言牌打出去（协议 §5.3）。
+func (g *Game) Riichi(userID int64, tile mahjong.Tile) error {
+	return g.call(command{kind: cmdRiichi, id: userID, tile: tile})
+}
+
 // Kan 是 game.kan。kind 取 "open" / "added" / "closed"（协议 §5.3）。
 //
 // 明杠走鸣牌窗口，不从这里走 —— 这里只收加杠与暗杠。
@@ -242,6 +249,7 @@ const (
 	cmdChi
 	cmdPon
 	cmdKan
+	cmdRiichi
 )
 
 type command struct {
@@ -268,6 +276,8 @@ func (g *Game) handle(c command) {
 		err = g.doPon(c.id)
 	case cmdKan:
 		err = g.doKan(c.id, c.text, c.tile)
+	case cmdRiichi:
+		err = g.doRiichi(c.id, c.tile)
 	}
 	c.reply <- err
 }

@@ -28,6 +28,8 @@ func (g *Game) winInput(seat int, tile mahjong.Tile, tsumo bool) mahjong.WinInpu
 		WinnerSeat:     seat,
 		DealerSeat:     g.dealer,
 		Honba:          g.honba,
+		IsRiichi:       g.riichi[seat],
+		UraIndicators:  g.wall.UraIndicators(), // 规则层只在 IsRiichi 时计入（§4）
 		IsRinshan:      g.rinshanDraw,
 		DoraIndicators: g.wall.DoraIndicators(),
 		PaoSeat:        g.paoSeatOf(seat),

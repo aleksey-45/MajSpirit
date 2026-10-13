@@ -230,3 +230,16 @@ type gameDoraView struct {
 	Indicator string `json:"indicator"`
 	Count     int    `json:"count"`
 }
+
+// gameRiichiView 是立直宣言。`tile` 是宣言牌 —— 别人据此知道他要打哪一张。
+type gameRiichiView struct {
+	Seat int    `json:"seat"`
+	Tile string `json:"tile"`
+}
+
+// gameRiichiStickView 是供托变化。`sticks` 是台上总数，和牌者一人收走。
+type gameRiichiStickView struct {
+	Sticks   int  `json:"sticks"`
+	NewStick bool `json:"newStick"`
+	Seat     int  `json:"seat"`
+}
