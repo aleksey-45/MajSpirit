@@ -214,8 +214,15 @@ async function main() {
             }
             case 'room.closed':
               throw new Error(`房间被服务端关掉了：${JSON.stringify(env.data)}`);
-            case 'error':
+            case 'error': {
+              // 整场刚打完时，上一条鸣牌窗口的迟到回应会得到 ILLEGAL_ACTION
+              // （"这一场已经打完了"）—— 那是收尾，不是脚本的错。别的码照旧报出来：
+              // 真要是服务端一直拒，牌局推不动，最后会以"没收到 gameEnd"超时收场。
+              const code = env.data.code;
+              const ref = String(env.data.ref ?? '');
+              if (code === 'ILLEGAL_ACTION' && ref.startsWith('game.')) break;
               throw new Error(`服务端报错：${JSON.stringify(env.data)}`);
+            }
             default:
               break;
           }
