@@ -157,6 +157,25 @@ test('game.riichi 的宣言牌就是一张打出的牌（服务端不补发 disc
   assert.deepEqual(v.game.scores, [24000, 25000, 25000, 25000], '供托扣的 1000 点要落到分数上');
 });
 
+test('room.left 空的是自己的座位：房间状态整个清掉', () => {
+  const v = started(); // mySeat 是 2
+
+  // 别人走了：房间留着，只把他那个座位抹掉
+  applyEvent(v, ev('room.left', { seat: 0 }, 3));
+  assert.equal(v.room.seats[0], null);
+  assert.equal(v.room.roomId, '7KQ2ZP', '别人走不影响我还在房间里');
+
+  // 自己走了：整间房都不属于我了 —— 留着 roomId，牌桌会继续画一间不属于我的房
+  applyEvent(v, ev('room.left', { seat: 2 }, 4));
+  assert.equal(v.room, null, '自己离开后房间状态必须清掉');
+
+  // 座位只是被抹掉、房间还在（比如保座超时那个人不是我）时不能清
+  const w = started();
+  applyEvent(w, ev('room.seatVacated', { seat: 1, reason: 'timeout' }, 5));
+  assert.equal(w.room.seats[1], null);
+  assert.equal(w.room.roomId, '7KQ2ZP');
+});
+
 test('room.closed：房间与对局一起清掉，但留下"为什么"', () => {
   const v = started(); // 有房间、有对局
   applyEvent(v, ev('room.closed', { roomId: '7KQ2ZP', reason: 'playerTimeout' }, 30));

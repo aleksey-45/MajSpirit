@@ -56,10 +56,16 @@ func (r *Room) doLeave(userID int64) error {
 	// 对局中离开算认输（协议 §5.2），处置与掉线超时一样：关掉整个房间。
 	if r.phase == phasePlaying {
 		r.log.Info("对局中离开，认输关房", "seat", s, "userId", userID)
+		r.emitTo(s, fact{typ: protocol.EventRoomLeft, data: roomLeft{Seat: s}})
 		r.broadcast(fact{typ: protocol.EventRoomLeft, data: roomLeft{Seat: s}})
 		r.closeRoom(reasonPlayerLeft)
 		return nil
 	}
+
+	// 走的人自己也要收到这一条：命令没有回执，而"我的座位没了"只有这条事件能告诉他。
+	// 必须在清座位**之前**发 —— 之后 broadcast 只发给还在座的人，他就收不到了。
+	// （客户端据此回大厅；少了它，页面会停在一张不再更新的牌桌上。）
+	r.emitTo(s, fact{typ: protocol.EventRoomLeft, data: roomLeft{Seat: s}})
 
 	r.seats[s] = nil
 	r.refreshWho()
