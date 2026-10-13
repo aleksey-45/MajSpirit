@@ -103,6 +103,10 @@ type roundWinView struct {
 	Yaku        []yakuView     `json:"yaku"`
 	Dora        doraView       `json:"dora"`
 	Payments    map[string]int `json:"payments"`
+	// PaoSeat / PaoYaku 是帕奥责任（规则集 §8.5）。非 null 时 payments 里会出现
+	// **某一座独自承担全额**的大额支出 —— 前端要能解释这个数字，别当成 bug。
+	PaoSeat *int   `json:"paoSeat"`
+	PaoYaku string `json:"paoYaku"`
 }
 
 type yakuView struct {
@@ -145,6 +149,10 @@ func (g *Game) roundWinView(winner, loser int, tile mahjong.Tile, tsumo bool, re
 	}
 	if !tsumo {
 		view.LoserSeat = &loser
+	}
+	if p := g.pao[winner]; p != nil {
+		view.PaoSeat = &p.seat
+		view.PaoYaku = p.yaku
 	}
 	for _, h := range res.Yaku {
 		view.Yaku = append(view.Yaku, yakuView{Name: h.Yaku.Name, Han: h.Han})

@@ -96,6 +96,8 @@ type Game struct {
 	claim *claim
 	// rinshanDraw 标记当前这张是岭上摸的 —— 岭上开花那个役就看它。
 	rinshanDraw bool
+	// pao 是帕奥责任者（规则集 §8.5）。必须记在**鸣牌那一刻**，见 pao.go。
+	pao [4]*paoInfo
 }
 
 // New 开一场并起它的 goroutine。

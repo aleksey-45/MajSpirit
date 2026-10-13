@@ -726,6 +726,48 @@ func TestHouteiRon(t *testing.T) {
 	}
 }
 
+// 帕奥责任必须记在**鸣牌那一刻**：副露里只留下"有一组白板"，看不出那张牌是谁打的。
+//
+// 直接单测这条记录规则，不摆一整局出来 —— 摆牌只能验到"某一局恰好成立"，
+// 而这里要验的是**阈值在哪一刻被跨过**：第三组三元牌才算，第二组不算。
+func TestPaoIsNotedAtTheMeldThatCompletesIt(t *testing.T) {
+	g := &Game{}
+	dragon := func(k mahjong.Tile) mahjong.Meld {
+		return mahjong.Meld{Kind: mahjong.MeldTriplet, IsOpen: true,
+			Tiles: [4]mahjong.Tile{k, k, k}}
+	}
+	white := mahjong.MustParseTiles("5z")[0]
+	green := mahjong.MustParseTiles("6z")[0]
+	red := mahjong.MustParseTiles("7z")[0]
+
+	// 两家各喂一组：还不构成大三元。
+	g.melds[1] = []mahjong.Meld{dragon(white)}
+	g.notePao(1, 0)
+	if got := g.paoSeatOf(1); got != mahjong.NoSeat {
+		t.Errorf("只有一组三元牌就记了责任者：%d", got)
+	}
+
+	g.melds[1] = append(g.melds[1], dragon(green))
+	g.notePao(1, 2)
+	if got := g.paoSeatOf(1); got != mahjong.NoSeat {
+		t.Errorf("两组三元牌就记了责任者：%d", got)
+	}
+
+	// 第三组：责任落在**打出这一张**的那家（座位 3）身上。
+	g.melds[1] = append(g.melds[1], dragon(red))
+	g.notePao(1, 3)
+	if got, want := g.paoSeatOf(1), 3; got != want {
+		t.Errorf("责任者 = %d，期望 %d（喂第三组的那家）", got, want)
+	}
+	if got := g.paoYakuOf(1); got != "大三元" {
+		t.Errorf("被喂成的役满 = %q，期望 大三元", got)
+	}
+	// 别人没碰过大三元，就没有责任者。
+	if got := g.paoSeatOf(2); got != mahjong.NoSeat {
+		t.Errorf("座位 2 不该有责任者：%d", got)
+	}
+}
+
 // discardDrawn 走一步：把当前行动者刚摸到的那张打出去。
 //
 // 它就是测试里的"假玩家" —— 不做决策，只把回合交出去。返回 false 表示牌山已空。

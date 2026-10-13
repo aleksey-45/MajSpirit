@@ -187,6 +187,11 @@ func (g *Game) growMelds(seat int, m mahjong.Meld, from int, taken mahjong.Tile)
 	}})
 	g.log.Info("鸣牌", "seat", seat, "kind", meldKindName(m.Kind),
 		"tiles", formatTiles(m.TilesUsed()))
+	// 帕奥责任就在**这一刻**记下：副露里只留下"有一组白板"，看不出那张牌是谁打的。
+	// 只有副露（碰/明杠）才可能有责任者 —— 暗杠与加杠没有放铳者。
+	if m.IsOpen {
+		g.notePao(seat, from)
+	}
 }
 
 func meldKindName(k mahjong.MeldKind) string {

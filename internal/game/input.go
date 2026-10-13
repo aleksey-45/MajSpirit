@@ -30,7 +30,7 @@ func (g *Game) winInput(seat int, tile mahjong.Tile, tsumo bool) mahjong.WinInpu
 		Honba:          g.honba,
 		IsRinshan:      g.rinshanDraw,
 		DoraIndicators: g.wall.DoraIndicators(),
-		PaoSeat:        mahjong.NoSeat, // 帕奥责任者还没接（必须在鸣牌那一刻记下）
+		PaoSeat:        g.paoSeatOf(seat),
 
 		// 海底摸月 / 河底捞鱼：牌山摸空之后的最后一张。判据是**可摸的牌山为空**，
 		// 不是"这局快结束了" —— 王牌不算，所以不能拿"余牌少"近似。
