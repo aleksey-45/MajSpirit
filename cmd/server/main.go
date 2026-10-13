@@ -123,6 +123,11 @@ func run(ctx context.Context, cfg config) error {
 	// 冲突到 panic —— 后者方法更宽、路径更具体，谁都不比谁更具体（实测过）。
 	mux.Handle("GET /{$}", web.Handler())
 
+	// 客户端脚本与牌面 SVG。同样由 Go 同源提供：牌桌页要连的 /ws 就在同一个源上，
+	// 所以既不需要 CORS，也不需要前端构建链。
+	mux.Handle("GET /app/", web.AppHandler())
+	mux.Handle("GET /tiles/", web.TilesHandler())
+
 	// ④ 用户系统与 /api/*。依赖在这里组装：pool 满足 user.Repo（结构化类型），
 	// revoker 建一次、由 Logout 与 Authenticate 共用。hist 同理满足 history.Repo。
 	svc := user.New(pool, cfg.JWTSecret, cfg.TokenTTL, auth.NewRevoker())
