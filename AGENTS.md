@@ -151,8 +151,8 @@ Godot 项目，六年都在造轮子。**第一次写 Go、第一次写服务端
 ```
 阶段一  规则层      ✅   internal/mahjong，覆盖率 98.6%，纯函数
 阶段二  用户系统    ✅   internal/{auth,store,user,api}
-阶段三  WebSocket   ⬜   ← 下一步
-阶段四  房间与对局  ⬜
+阶段三  WebSocket   ✅   internal/ws + web/（调试客户端，由 Go 在 `GET /{$}` 上 serve）
+阶段四  房间与对局  ⬜   ← 下一步
 阶段五  历史牌局    ⬜
 阶段六  加分项      ⬜
 ```
@@ -165,7 +165,11 @@ cmd/server → api ──→ user ──→ store ──→ migrations
                    auth
 ```
 
+`internal/ws` 也挂在 `cmd/server` 上（不是 `api`），它自己定义 `Authenticator`
+接口、由 `cmd/server` 用 `user.Service` 接起来 —— 与 `api.UserService` 同一条规矩。
+`web` 只被 `cmd/server` 引用，是调试页的静态资源。
+
 `internal/mahjong` 是叶子：不 import 本项目任何包。所以它能脱离网络、数据库、
 并发单独测试 —— 那是它 98.6% 覆盖率的来源，也是它做任何改动都不该破坏的性质。
 
-**下一步**：读 [`docs/local/阶段三-通信.md`](docs/local/阶段三-通信.md)。
+**下一步**：读 [`docs/local/阶段四-对局.md`](docs/local/阶段四-对局.md)。
