@@ -23,6 +23,7 @@ import (
 
 	"github.com/aleksey-45/majspirit/internal/api"
 	"github.com/aleksey-45/majspirit/internal/auth"
+	"github.com/aleksey-45/majspirit/internal/room"
 	"github.com/aleksey-45/majspirit/internal/store"
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/aleksey-45/majspirit/internal/ws"
@@ -127,9 +128,15 @@ func run(ctx context.Context, cfg config) error {
 	mux.Handle("/api/", api.NewRouter(svc))
 	// WebSocket 入口不在 /api/ 下（协议 §2.1），也不走 api.NewRouter：
 	// ws 与 api 互不认识，由这里分开挂上。svc 同时满足 ws.Authenticator。
-	// registry 建一次、跨所有连接共用 —— 它的作用就是"按用户找到连接"，
-	// 每连接一个就失去意义。阶段四的房间层也用它推事件。
-	mux.Handle("GET /ws", ws.NewHandler(svc, ws.NewRegistry()))
+	//
+	// 连接注册表与房间注册表都只建一次、跨所有连接共用：指令走
+	// 连接 → Hub → 房间/对局，事件走 房间/对局 → Registry → 连接。
+	registry := ws.NewRegistry()
+	hub := room.NewHub(registry.Send, nil)
+	// 进程退出时房间要一起关掉（房间会带走它手上那一场对局）。
+	defer hub.Close()
+
+	mux.Handle("GET /ws", ws.NewHandler(svc, registry, hub))
 
 	srv := &http.Server{
 		Handler: mux,

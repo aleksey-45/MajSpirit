@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aleksey-45/majspirit/internal/auth"
+	"github.com/aleksey-45/majspirit/internal/room"
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -41,7 +42,11 @@ func newTestServer(t *testing.T, auth Authenticator, timeout time.Duration) stri
 func newTestServerWithHeartbeat(t *testing.T, auth Authenticator, timeout, pingEvery, pongWait time.Duration) string {
 	t.Helper()
 
-	h := NewHandler(auth, NewRegistry())
+	registry := NewRegistry()
+	hub := room.NewHub(registry.Send, nil)
+	t.Cleanup(hub.Close)
+
+	h := NewHandler(auth, registry, hub)
 	h.timeout = timeout
 	h.pingEvery = pingEvery
 	h.pongWait = pongWait

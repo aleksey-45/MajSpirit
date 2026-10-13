@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/aleksey-45/majspirit/internal/room"
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/coder/websocket"
 )
@@ -42,21 +43,28 @@ type Authenticator interface {
 type Handler struct {
 	auth     Authenticator
 	registry *Registry
+	hub      *room.Hub
 	timeout  time.Duration
 
 	pingEvery time.Duration
 	pongWait  time.Duration
 }
 
-// NewHandler 收一个共享的 Registry：它必须跨连接共用，才能按用户找到连接。
-// 传 nil 会新建一个 —— 测试里通常不关心，但生产必须传。
-func NewHandler(auth Authenticator, registry *Registry) *Handler {
+// NewHandler 收一个共享的 Registry 与一个共享的 Hub，两个都必须跨连接共用。
+//
+// 指令走 连接 → Hub → 房间/对局，事件走 房间/对局 → Registry → 连接：
+// Hub 的投递方就是这个 Registry（cmd/server 用 registry.Send 造 Hub）。
+func NewHandler(auth Authenticator, registry *Registry, hub *room.Hub) *Handler {
 	if registry == nil {
 		registry = NewRegistry()
+	}
+	if hub == nil {
+		hub = room.NewHub(registry.Send, nil)
 	}
 	return &Handler{
 		auth:      auth,
 		registry:  registry,
+		hub:       hub,
 		timeout:   authTimeout,
 		pingEvery: pingInterval,
 		pongWait:  pongTimeout,
@@ -85,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log := slog.With("session", session)
 	log.Info("websocket 连接建立", "remote", r.RemoteAddr)
 
-	client := newClient(c, h.auth, log)
+	client := newClient(c, h.auth, h.hub, log)
 	client.authTimeout = h.timeout
 	client.pingEvery = h.pingEvery
 	client.pongWait = h.pongWait
@@ -110,9 +118,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Info("同一账号的旧连接被顶掉")
 		old.Close(statusReplaced, "在别处登录")
 	}
-	defer h.registry.Remove(u.ID, client)
+
+	// 先摘连接、再报告掉线。摘表返回的是"摘掉的确实是这条连接"：被顶号的旧连接
+	// 随后也会走到这里，那时注册表里已经是新连接 —— 照报就会把有人管的座位标成离线。
+	defer func() {
+		if h.registry.Remove(u.ID, client) {
+			h.reportGone(u.ID)
+		}
+	}()
+
+	// 座位还留着的话，这次连接就是重连（协议 §4.5）。
+	h.resume(u)
 
 	// 心跳独立成 goroutine：Ping 要等读把 pong 读出来，两者必须并发。
 	go client.heartbeat(ctx)
 	client.readLoop()
+}
+
+// resume 把这条连接接回他原来那个房间（如果还有）。
+//
+// 协议 §4.5 的重连流程里只有客户端的 game.sync，房间这一半由服务端补发 room.joined
+// （带 roomId 与 mySeat；room.seats 只说谁在座）。座位还在线时也照发：客户端此刻
+// 手上什么都没有，那正是它重建视图的来源。
+func (h *Handler) resume(u user.User) {
+	r, ok := h.hub.ByUser(u.ID)
+	if !ok {
+		return
+	}
+	// 房间刚关掉之类的失败不算错：那条 room.closed 已经在路上了。
+	if err := r.Reconnected(u.ID); err != nil {
+		slog.Info("重连房间失败", "userId", u.ID, "err", err)
+	}
+}
+
+// reportGone 告诉房间这个人的连接断了（座位按协议 §4.5 保留 120 秒）。
+// 房间已经没了就什么都不用做。
+func (h *Handler) reportGone(userID int64) {
+	r, ok := h.hub.ByUser(userID)
+	if !ok {
+		return
+	}
+	if err := r.Disconnected(userID); err != nil {
+		slog.Info("报告掉线失败", "userId", userID, "err", err)
+	}
 }

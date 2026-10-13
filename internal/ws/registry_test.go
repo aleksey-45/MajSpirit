@@ -14,7 +14,7 @@ import (
 // 前两条不需要网络：Registry.Send 只是把消息投进 Client.send，
 // 所以直接构造 Client 就能测，不必起服务端。
 
-func fakeClient() *Client { return newClient(nil, nil, slog.Default()) }
+func fakeClient() *Client { return newClient(nil, nil, nil, slog.Default()) }
 
 func TestRegistrySend(t *testing.T) {
 	r := NewRegistry()
@@ -64,6 +64,30 @@ func TestRegistryRemoveKeepsReplacement(t *testing.T) {
 	}
 	if err := r.Send(u.ID, Envelope{Type: EventHello}); err != nil {
 		t.Errorf("新连接被旧连接一起摘掉了: %v", err)
+	}
+}
+
+// Remove 要报告"摘掉的确实是它"：handler 靠这个返回值决定要不要告诉房间"人掉了"。
+//
+// 被顶号的旧连接退出时不算掉线 —— 报了就有一个有人管的座位被标成离线，
+// 另外三家看到一个假的「掉线」（协议 §4.5 要求掉线对其他人可见），
+// 而线上表现只是"刚连上就显示掉线"，很难查。
+func TestRegistryRemoveReportsWhetherItWasCurrent(t *testing.T) {
+	r := NewRegistry()
+	u := user.User{ID: 7, Username: "seven"}
+	old, fresh := fakeClient(), fakeClient()
+
+	r.Add(u, old)
+	r.Add(u, fresh)
+
+	if r.Remove(u.ID, old) {
+		t.Error("旧连接摘自己时报告 true —— 顶号会被当成掉线")
+	}
+	if !r.Remove(u.ID, fresh) {
+		t.Error("当前连接摘自己时应当报告 true，否则真掉线了没人上报")
+	}
+	if r.Remove(u.ID, fresh) {
+		t.Error("同一条连接摘两次，第二次应当报告 false")
 	}
 }
 

@@ -19,13 +19,50 @@ type pongEvent struct {
 }
 
 // 错误码是给机器看的标识，message 才是给人看的（协议 §2.6）。
+// 这张表少一个 RATE_LIMITED：还没有限流，等真有了再加。
 type ErrorCode string
 
 const (
-	CodeAuthRequired ErrorCode = "AUTH_REQUIRED"
-	CodeAuthFailed   ErrorCode = "AUTH_FAILED"
-	CodeInternal     ErrorCode = "INTERNAL"
+	CodeBadRequest     ErrorCode = "BAD_REQUEST"
+	CodeUnknownCommand ErrorCode = "UNKNOWN_COMMAND"
+	CodeAuthRequired   ErrorCode = "AUTH_REQUIRED"
+	CodeAuthFailed     ErrorCode = "AUTH_FAILED"
+	CodeNotInRoom      ErrorCode = "NOT_IN_ROOM"
+	CodeAlreadyInRoom  ErrorCode = "ALREADY_IN_ROOM"
+	CodeRoomNotFound   ErrorCode = "ROOM_NOT_FOUND"
+	CodeRoomFull       ErrorCode = "ROOM_FULL"
+	CodeRoomStarted    ErrorCode = "ROOM_STARTED"
+	CodeNotRoomOwner   ErrorCode = "NOT_ROOM_OWNER"
+	CodeNotYourTurn    ErrorCode = "NOT_YOUR_TURN"
+	CodeIllegalAction  ErrorCode = "ILLEGAL_ACTION"
+	CodeTileNotInHand  ErrorCode = "TILE_NOT_IN_HAND"
+	CodeInternal       ErrorCode = "INTERNAL"
 )
+
+// ── 指令的 data（协议 §5.2、§5.3）───────────────────────────────────────
+//
+// 字段名与协议一致。*bool 区分"没给"与"给了 false"。
+
+type roomJoinCommand struct {
+	RoomID string `json:"roomId"`
+}
+
+type roomReadyCommand struct {
+	Ready *bool `json:"ready"`
+}
+
+type gameDiscardCommand struct {
+	Tile string `json:"tile"`
+}
+
+type gameChiCommand struct {
+	Tiles []string `json:"tiles"`
+}
+
+type gameKanCommand struct {
+	Kind string `json:"kind"`
+	Tile string `json:"tile,omitempty"`
+}
 
 type authCommand struct {
 	Token string `json:"token"`

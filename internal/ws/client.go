@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aleksey-45/majspirit/internal/room"
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -38,6 +39,10 @@ type Client struct {
 	ws   *websocket.Conn
 	auth Authenticator
 	log  *slog.Logger
+
+	// hub 是房间注册表，跨所有连接共用（cmd/server 建一次）：
+	// 已认证的指令要落到房间与对局的 actor 上（dispatch.go）。
+	hub *room.Hub
 
 	// 唯一的写入口。
 	send chan Envelope
@@ -74,10 +79,11 @@ type Client struct {
 	user user.User
 }
 
-func newClient(c *websocket.Conn, auth Authenticator, log *slog.Logger) *Client {
+func newClient(c *websocket.Conn, auth Authenticator, hub *room.Hub, log *slog.Logger) *Client {
 	return &Client{
 		ws:          c,
 		auth:        auth,
+		hub:         hub,
 		log:         log,
 		send:        make(chan Envelope, 32), // 缓冲：投递方不该为了等一次网络写而阻塞
 		done:        make(chan struct{}),
@@ -350,7 +356,7 @@ func (c *Client) readLoop() {
 	readCtx := context.Background()
 
 	for {
-		env, data, err := readCommand(readCtx, c.ws)
+		env, _, err := readCommand(readCtx, c.ws)
 		if err != nil {
 			c.log.Info("读取结束", "err", err)
 			if errors.Is(err, errProtocol) {
@@ -369,8 +375,7 @@ func (c *Client) readLoop() {
 			continue
 		}
 		// 协议 §4.3 的另一个方向：客户端主动 ping 时服务端回 pong。
-		// 它不能落进下面那条"只记日志"的分支 —— 客户端靠它探活，
-		// 不回和连接已死对客户端是同一个现象。
+		// 它不能落进下面那条分派 —— 客户端靠它探活，不回和连接已死是同一个现象。
 		if env.Type == CmdPing {
 			if err := c.Send(Envelope{
 				Type: EventPong,
@@ -380,8 +385,9 @@ func (c *Client) readLoop() {
 			}
 			continue
 		}
-		// 其余指令的分派留给后续步骤（房间层）。现在只记下来。
-		c.log.Info("收到指令", "type", string(env.Type), "data", string(data))
+		// 其余指令分派给房间与对局的 actor（协议 §5.2、§5.3）；失败就地回 error
+		// 事件，连接留着。
+		c.dispatch(env)
 	}
 }
 

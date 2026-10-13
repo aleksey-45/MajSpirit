@@ -39,18 +39,20 @@ func (r *Registry) Add(u user.User, c *Client) *Client {
 	return old
 }
 
-// Remove 摘掉一条连接。
+// Remove 摘掉一条连接，并报告"摘掉的确实是它"。
 //
-// 只在"登记的还是它"时删。被新连接顶掉的旧连接随后也会走到这里，
-// 那时 map 里已经是新连接 —— 照删就会把新连接摘掉。这个错不报错，
-// 只表现为"刚连上就收不到消息"，很难查。
-func (r *Registry) Remove(userID int64, c *Client) {
+// 只在"登记的还是它"时删：被顶掉的旧连接随后也会走到这里，照删就会把新连接摘掉。
+//
+// 返回 false 表示这条连接已经不是当前那条 —— handler 据此不把它算成掉线。
+func (r *Registry) Remove(userID int64, c *Client) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.clients[userID] == c {
-		delete(r.clients, userID)
+	if r.clients[userID] != c {
+		return false
 	}
+	delete(r.clients, userID)
+	return true
 }
 
 // Send 给某个用户发一条消息；不在线返回 ErrOffline。
