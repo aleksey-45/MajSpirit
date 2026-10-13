@@ -109,7 +109,7 @@ func do(t *testing.T, h http.Handler, method, path, body, authz string) *httptes
 // 或者把 userFrom 改成从 query/请求体取 id，这条就会挂。
 func TestMeReturnsTheTokenOwner(t *testing.T) {
 	svc := newFakeService()
-	router := NewRouter(svc)
+	router := NewRouter(svc, newFakeHistory())
 	ctx := context.Background()
 
 	for _, name := range []string{"alice", "bob"} {
@@ -143,7 +143,7 @@ func TestMeReturnsTheTokenOwner(t *testing.T) {
 
 // 客户端带多余字段必须被拒 —— 否则它就能试着自己指定 id 之类的东西。
 func TestRejectsUnknownJSONFields(t *testing.T) {
-	rr := do(t, NewRouter(newFakeService()), "POST", "/api/register",
+	rr := do(t, NewRouter(newFakeService(), newFakeHistory()), "POST", "/api/register",
 		`{"username":"alice","password":"abc1234","id":1}`, "")
 
 	if rr.Code != http.StatusBadRequest {
@@ -166,7 +166,7 @@ func TestInternalErrorLeaksNothingToClient(t *testing.T) {
 	svc := newFakeService()
 	svc.authErr = errors.New(secret)
 
-	rr := do(t, NewRouter(svc), "GET", "/api/me", "", "Bearer whatever")
+	rr := do(t, NewRouter(svc, newFakeHistory()), "GET", "/api/me", "", "Bearer whatever")
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("状态码 %d，期望 500", rr.Code)

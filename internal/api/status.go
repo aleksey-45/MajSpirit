@@ -6,8 +6,21 @@ import (
 	"net/http"
 
 	"github.com/aleksey-45/majspirit/internal/auth"
+	"github.com/aleksey-45/majspirit/internal/history"
 	"github.com/aleksey-45/majspirit/internal/user"
 )
+
+// writeHistoryError 把历史用例层的错误翻成 HTTP。
+//
+// 兜底直接复用 writeServiceError：500 的口径与"细节只进日志"只该有一处，
+// 抄第二份迟早会漂移。
+func writeHistoryError(w http.ResponseWriter, err error) {
+	if errors.Is(err, history.ErrNoGame) {
+		writeError(w, http.StatusNotFound, "牌局不存在")
+		return
+	}
+	writeServiceError(w, err)
+}
 
 // writeServiceError 把业务错误翻成 HTTP。这是错误链的终点：再往上没有能
 // 做决定的层了，所以 500 也在这里兜。
