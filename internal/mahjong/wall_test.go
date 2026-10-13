@@ -388,3 +388,25 @@ func TestWallHashCoversDeadWall(t *testing.T) {
 		t.Error("王牌换了牌，指纹却没变——承诺值没覆盖王牌")
 	}
 }
+
+// 岭上摸牌**不能改动宝牌指示牌**。
+//
+// 这条抓的是 Go 切片的一个陷阱：`newWall` 把一副 136 张的切片切成四段，四段共享
+// 同一个底层数组；`rinshan` 的容量一直伸到数组末尾，所以 `append(rinshan, x)`
+// 会**就地写入** —— 那个位置正是 `dora[0]`。三索引切片（`a[i:j:k]`）把容量卡死，
+// append 才会去申请新数组。
+func TestRinshanDoesNotCorruptDoraIndicators(t *testing.T) {
+	w := NewWallFromSeed(testSeed)
+	before := append([]Tile(nil), w.DoraIndicators()...)
+
+	if _, ok := w.DrawRinshan(); !ok {
+		t.Fatal("岭上摸牌失败")
+	}
+
+	after := w.DoraIndicators()
+	for i, want := range before {
+		if after[i] != want {
+			t.Fatalf("杠之后宝牌指示牌被改了：%v → %v", before, after)
+		}
+	}
+}

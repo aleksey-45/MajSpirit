@@ -33,12 +33,17 @@ type Wall struct {
 }
 
 // newWall 把一副洗好的 136 张切成"可摸"与"王牌"两段。
+//
+// **四段都用三索引切片把容量卡死。** 这不是保险，是必需的：不卡的话 `rinshan` 的
+// 容量一直伸到数组末尾，`append(rinshan, x)` 会就地写入 —— 那个位置正是 `dora[0]`，
+// 于是"杠一次"会把宝牌指示牌悄悄换掉（实测：三筒 → 一筒）。
+// 测试 TestRinshanDoesNotCorruptDoraIndicators 就是为这一条写的。
 func newWall(tiles []Tile) *Wall {
 	n := len(tiles) - DeadWallSize
 	return &Wall{
-		live:    tiles[:n],
-		rinshan: tiles[n : n+rinshanSize],
-		dora:    tiles[n+rinshanSize : n+rinshanSize+indicatorSize],
+		live:    tiles[:n:n],
+		rinshan: tiles[n : n+rinshanSize : n+rinshanSize],
+		dora:    tiles[n+rinshanSize : n+rinshanSize+indicatorSize : n+rinshanSize+indicatorSize],
 		ura:     tiles[n+rinshanSize+indicatorSize:],
 	}
 }
