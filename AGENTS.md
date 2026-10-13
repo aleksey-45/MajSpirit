@@ -108,6 +108,14 @@ Godot 项目，六年都在造轮子。**第一次写 Go、第一次写服务端
   **历史坑，仅供考古**：编译器不在 PATH 上时，`CC` 也不能直接写带空格的完整路径 ——
   Go 按空格切 `CC`，报 `cgo: C compiler "D:/Program" not found`。PATH 修好后这条不适用。
   `实现指南.md` 里那条 Docker 命令**仍未实测**（Docker 没装），现在也不必了。
+- **在 PowerShell 里敲 `bash` 会开 WSL，不是 Git Bash。** `C:\Windows\System32\bash.exe`
+  是 WSL 的启动器，一旦它先被解析到，命令就进了 Linux：工作区变成 `/mnt/e/Workspace/Majspirit`，
+  而那里**没装 Go**，报出来的是「找不到 go」——看起来像 Windows 环境坏了，其实是另一个系统。
+  实测踩过。判别用 `uname -r`：Git Bash 是 `MINGW64_NT-*`，WSL 是 `*-microsoft-standard-WSL*`。
+  PowerShell 里要跑 bash 脚本，用完整路径：`& "D:\Tools\Git\bin\bash.exe" scripts/test-race.sh ./...`
+  （Git 装在 `D:\Tools\Git`，不在 `C:\Program Files\Git`）。
+- **PATH 已补全（2026-10-13）**：用户 PATH 加了 `C:\Program Files\Go\bin`（此前只在系统 PATH 里，
+  于是 Git Bash 找不到 `go`）。改动前的备份在 `bin/PATH-user-*.txt`。
 - 装数据库、配 Docker 加速器的步骤在 [`环境搭建.md`](docs/local/环境搭建.md)。
 
 ## 权威依据（同一个结论只写一处）
