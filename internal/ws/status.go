@@ -11,4 +11,6 @@ const (
 	statusAuthFailed = websocket.StatusCode(4401)
 	// statusHeartbeatTimeout 是心跳超时（协议 §4.3：连续未回 pong 判死）。
 	statusHeartbeatTimeout = websocket.StatusCode(4408)
+	// statusReplaced 是同一账号在别处登录，这条连接被顶掉（协议 §4.6）。
+	statusReplaced = websocket.StatusCode(4403)
 )

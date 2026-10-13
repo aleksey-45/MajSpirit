@@ -23,7 +23,7 @@ import (
 // 拿到的是 EOF，看不出"帧没写"还是"帧写了但被截断"；只有裸字节能证明。
 // （修复办法见 handler.go 里 authenticate 的注释：超时用显式定时器，别交给读的 ctx。）
 func TestAuthTimeoutCloseCodeOnWire(t *testing.T) {
-	h := NewHandler(&fakeAuth{})
+	h := NewHandler(&fakeAuth{}, NewRegistry())
 	h.timeout = 100 * time.Millisecond
 
 	srv := httptest.NewServer(h)

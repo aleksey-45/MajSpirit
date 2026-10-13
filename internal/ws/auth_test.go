@@ -41,7 +41,7 @@ func newTestServer(t *testing.T, auth Authenticator, timeout time.Duration) stri
 func newTestServerWithHeartbeat(t *testing.T, auth Authenticator, timeout, pingEvery, pongWait time.Duration) string {
 	t.Helper()
 
-	h := NewHandler(auth)
+	h := NewHandler(auth, NewRegistry())
 	h.timeout = timeout
 	h.pingEvery = pingEvery
 	h.pongWait = pongWait

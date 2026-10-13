@@ -40,16 +40,23 @@ type Authenticator interface {
 // 三个时限做成字段而不是直接引用常量，是为了测试能缩短它们
 // （真等 5 秒或 15+5 秒会把套件拖垮）。
 type Handler struct {
-	auth    Authenticator
-	timeout time.Duration
+	auth     Authenticator
+	registry *Registry
+	timeout  time.Duration
 
 	pingEvery time.Duration
 	pongWait  time.Duration
 }
 
-func NewHandler(auth Authenticator) *Handler {
+// NewHandler 收一个共享的 Registry：它必须跨连接共用，才能按用户找到连接。
+// 传 nil 会新建一个 —— 测试里通常不关心，但生产必须传。
+func NewHandler(auth Authenticator, registry *Registry) *Handler {
+	if registry == nil {
+		registry = NewRegistry()
+	}
 	return &Handler{
 		auth:      auth,
+		registry:  registry,
 		timeout:   authTimeout,
 		pingEvery: pingInterval,
 		pongWait:  pongTimeout,
@@ -96,6 +103,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u := client.user
 	log.Info("认证通过", "userId", u.ID, "username", u.Username)
 	defer log.Info("websocket 连接断开")
+
+	// 同一账号只保留一条连接：新的顶掉旧的，旧的以 4403 关闭（协议 §4.6）。
+	// 关闭放在锁外（Add 返回旧连接而不是就地关）—— 它可能等写 goroutine。
+	if old := h.registry.Add(u, client); old != nil {
+		log.Info("同一账号的旧连接被顶掉")
+		old.Close(statusReplaced, "在别处登录")
+	}
+	defer h.registry.Remove(u.ID, client)
 
 	// 心跳独立成 goroutine：Ping 要等读把 pong 读出来，两者必须并发。
 	go client.heartbeat(ctx)

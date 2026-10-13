@@ -116,6 +116,25 @@ Godot 项目，六年都在造轮子。**第一次写 Go、第一次写服务端
   （Git 装在 `D:\Tools\Git`，不在 `C:\Program Files\Git`）。
 - **PATH 已补全（2026-10-13）**：用户 PATH 加了 `C:\Program Files\Go\bin`（此前只在系统 PATH 里，
   于是 Git Bash 找不到 `go`）。改动前的备份在 `bin/PATH-user-*.txt`。
+
+## 第三方库的坑（从代码里查不到，会重踩）
+
+- **`coder/websocket` 的 `Conn.Close` 在有并发读者的连接上会死锁。**
+  它写完关闭帧会等对端回关闭回复，而等待要拿**读锁**（`close.go` 的
+  `waitCloseHandshake` → `readMu.lock`）；同一个连接上的读循环正持有读锁等数据
+  （不把连接断开它就不返回）。于是关闭流程、读循环、`CloseNow` 内部的
+  `waitGoroutines` 三者互等，整条连接卡死 —— goroutine 栈实测过。
+  暂时性关闭用 `CloseNow`，要发关闭帧就别在有读者的连接上干等（`finishClose`
+  里的写法：起 goroutine 写帧、只等很短的上限、然后 `CloseNow`）。
+
+- **`Conn.Ping`（传输层控制帧）超时的那一刻会把整条连接关掉**：
+  `setupWriteTimeout` 注册的 `AfterFunc` 里调了 `c.close()`。所以"超时之后
+  再补发一条 4408 关闭帧"物理上做不到 —— 帧没地方写，客户端只看到 EOF。
+  而且它绕过写 goroutine，等于第二个写者。**心跳用协议 §4.3 的应用层
+  `ping`/`pong` 消息**（见 `internal/ws/client.go` 的 `heartbeat`）。
+  读超时同理：`setupReadTimeout` 也会 `c.close()`，所以认证超时用显式定时器
+  而不是"把带截止时间的 ctx 交给 Read"。
+
 - 装数据库、配 Docker 加速器的步骤在 [`环境搭建.md`](docs/local/环境搭建.md)。
 
 ## 权威依据（同一个结论只写一处）
