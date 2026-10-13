@@ -240,9 +240,9 @@ func TestExhaustionDraw(t *testing.T) {
 		t.Fatalf("endedBy = %v, 期望 draw", m["endedBy"])
 	}
 
-	// 发牌后剩 84 张，所以正好摸 84 次、打 84 张；第 85 次摸牌时牌山已空。
-	if got := n.count(userOf(0), protocol.EventGameDiscarded); got != 84 {
-		t.Errorf("打出了 %d 张, 期望 84（136 − 52）", got)
+	// 发牌后剩 70 张（136 − 52 − 14 张王牌），所以正好摸 70 次、打 70 张。
+	if got := n.count(userOf(0), protocol.EventGameDiscarded); got != 70 {
+		t.Errorf("打出了 %d 张, 期望 70（136 − 52 − 王牌 14）", got)
 	}
 
 	var sum int

@@ -31,7 +31,7 @@ func fullSetCounts() map[Tile]int { return countsOf(FullSet()) }
 func TestWallIsComplete(t *testing.T) {
 	w := NewWallFromSeed(testSeed)
 
-	if got := w.Remaining(); got != NumTiles {
+	if got := w.Remaining(); got != NumTiles-DeadWallSize {
 		t.Errorf("新牌山剩余 %d 张，期望 %d 张", got, NumTiles)
 	}
 	if w.Empty() {
@@ -134,7 +134,7 @@ func TestWallDrawConsumesAll(t *testing.T) {
 	w := NewWallFromSeed(testSeed)
 
 	counts := make(map[Tile]int, NumTileKinds)
-	for i := 0; i < NumTiles; i++ {
+	for i := 0; i < NumTiles-DeadWallSize; i++ {
 		tile, ok := w.Draw()
 		if !ok {
 			t.Fatalf("第 %d 次摸牌失败，还剩 %d 张", i+1, w.Remaining())
@@ -142,10 +142,14 @@ func TestWallDrawConsumesAll(t *testing.T) {
 		counts[tile]++
 	}
 
-	// 摸完 136 张后每种恰好 4 张——这一条同时验证了「确实在消耗」
-	// 和「洗牌没弄丢也没多出牌」
-	if !maps.Equal(counts, fullSetCounts()) {
-		t.Error("摸完 136 张后，各牌张数与完整牌堆不一致")
+	// 可摸的摸完之后，摸出来的 + 剩下的（王牌）合起来恰好是完整牌堆。
+	// 这一条同时验证了「确实在消耗」和「洗牌没弄丢也没多出牌」。
+	combined := countsOf(w.Tiles())
+	for t, n := range counts {
+		combined[t] += n
+	}
+	if !maps.Equal(combined, fullSetCounts()) {
+		t.Error("摸完可摸的牌之后，摸出来的加剩下的与完整牌堆不一致")
 	}
 	if !w.Empty() {
 		t.Errorf("摸完 %d 张后牌山仍非空，剩余 %d 张", NumTiles, w.Remaining())
@@ -157,7 +161,7 @@ func TestWallDrawConsumesAll(t *testing.T) {
 
 func TestWallDrawFollowsOrder(t *testing.T) {
 	w := NewWallFromSeed(testSeed)
-	order := w.Tiles()
+	order := w.Tiles()[:NumTiles-DeadWallSize]
 
 	for i := range order {
 		got, ok := w.Draw()
@@ -167,7 +171,7 @@ func TestWallDrawFollowsOrder(t *testing.T) {
 		if got != order[i] {
 			t.Fatalf("第 %d 次摸到 %s，期望 %s（摸牌顺序应与 Tiles 一致）", i+1, got, order[i])
 		}
-		if want := NumTiles - i - 1; w.Remaining() != want {
+		if want := NumTiles - DeadWallSize - i - 1; w.Remaining() != want {
 			t.Fatalf("摸走 %d 张后剩余 %d 张，期望 %d 张", i+1, w.Remaining(), want)
 		}
 	}
@@ -254,7 +258,7 @@ func TestWallDeal(t *testing.T) {
 	if consumed := before - w.Remaining(); total != consumed {
 		t.Errorf("发到 %d 张，牌山却减少 %d 张——有牌丢失", total, consumed)
 	}
-	if want := NumTiles - HandSize*4; w.Remaining() != want {
+	if want := NumTiles - DeadWallSize - HandSize*4; w.Remaining() != want {
 		t.Errorf("发牌后剩余 %d 张，期望 %d 张", w.Remaining(), want)
 	}
 }
@@ -280,7 +284,7 @@ func TestDealerDrawsFourteenthTile(t *testing.T) {
 	if !tile.Valid() {
 		t.Errorf("庄家摸到了非法的牌 Tile(%d)", tile)
 	}
-	if got, want := w.Remaining(), NumTiles-HandSize*4-1; got != want {
+	if got, want := w.Remaining(), NumTiles-DeadWallSize-HandSize*4-1; got != want {
 		t.Errorf("庄家摸牌后剩余 %d 张，期望 %d 张", got, want)
 	}
 }
@@ -313,7 +317,7 @@ func TestWallDealTooShort(t *testing.T) {
 
 	const need = HandSize * 4
 	// 摸到只剩 need-1 张
-	for i := 0; i < NumTiles-(need-1); i++ {
+	for w.Remaining() > need-1 {
 		w.Draw()
 	}
 	if got := w.Remaining(); got != need-1 {
@@ -322,5 +326,65 @@ func TestWallDealTooShort(t *testing.T) {
 
 	if _, err := w.Deal(); err == nil {
 		t.Errorf("余牌 %d 张时 Deal 应当报错", need-1)
+	}
+}
+
+// 王牌：14 张永远不按常规摸走，可摸张数因此是 136−14−52 = 70。
+//
+// 这一条防的是"杠从空气里变出牌来"：每次杠摸 1 张岭上、同时从牌山末尾补 1 张
+// 进王牌，所以**可摸张数净减 1**。少了补牌这一步，四个杠就凭空多摸四张，
+// 验牌时那四张的来源对不上。
+func TestDeadWallRinshanAndIndicators(t *testing.T) {
+	w := NewWallFromSeed(testSeed)
+	if got := len(w.DoraIndicators()); got != 1 {
+		t.Errorf("开局宝牌指示牌 %d 张，期望 1 张", got)
+	}
+	if got := len(w.UraIndicators()); got != 1 {
+		t.Errorf("开局里宝指示牌 %d 张，期望 1 张", got)
+	}
+
+	before := w.Remaining()
+	for i := 1; i <= 4; i++ {
+		if _, ok := w.DrawRinshan(); !ok {
+			t.Fatalf("第 %d 次岭上摸牌失败", i)
+		}
+		if got := len(w.DoraIndicators()); got != 1+i {
+			t.Errorf("杠 %d 次后宝牌指示牌 %d 张，期望 %d 张", i, got, 1+i)
+		}
+		if got := w.Remaining(); got != before-i {
+			t.Errorf("杠 %d 次后可摸 %d 张，期望 %d 张（每次杠净减 1）", i, got, before-i)
+		}
+	}
+	if w.Kans() != 4 {
+		t.Errorf("杠数 = %d，期望 4", w.Kans())
+	}
+
+	// 岭上牌是**摸不完的**：每次杠都从牌山末尾补一张进王牌。真正封顶的是规则里的
+	// `MaxKans`（四个杠）和宝牌指示牌只有 5 张。所以这里断言的是后者：
+	// 一直杠下去，指示牌也不会超出那 5 张。
+	for range 4 {
+		w.DrawRinshan()
+		if got := len(w.DoraIndicators()); got > indicatorSize {
+			t.Fatalf("宝牌指示牌 %d 张，最多只该有 %d 张", got, indicatorSize)
+		}
+	}
+}
+
+// 承诺值必须覆盖**整副**牌：只 hash 可摸的那 122 张，服务端就能事后摆布王牌。
+func TestWallHashCoversDeadWall(t *testing.T) {
+	a := NewWallFromSeed(testSeed)
+
+	// 换掉王牌里的一张（模拟服务端想改宝牌指示牌），指纹必须变。
+	tiles := FullSet()
+	Shuffle(tiles, rand.New(rand.NewChaCha8(testSeed)))
+	n := len(tiles) - DeadWallSize
+	tiles[n], tiles[0] = tiles[0], tiles[n]
+
+	b, err := NewWallFromTiles(tiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if WallHash(a) == WallHash(b) {
+		t.Error("王牌换了牌，指纹却没变——承诺值没覆盖王牌")
 	}
 }
