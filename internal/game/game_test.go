@@ -1008,8 +1008,11 @@ func discardDrawn(t *testing.T, g *Game, n *fakeNotifier) bool {
 	// 对**四个座位无脑过一遍**，不靠数事件判断窗口开没开：窗口只推给有资格的座位，
 	// 而 claimClosed 是广播给所有人的 —— 拿两个计数相减必然错位。
 	// 没有窗口时 Pass 是空操作（doPass 对没资格的座位返回 nil）。
+	//
+	// ErrClosed 不算失败：最后一步常常落在整场打完之后 —— 那一刻 actor 已经自退了，
+	// 剩下的 Pass 投不进任何地方。谁在这条路上较真，谁就会按随机牌山偶发地挂。
 	for seat := range 4 {
-		if err := g.Pass(userOf(seat)); err != nil {
+		if err := g.Pass(userOf(seat)); err != nil && !errors.Is(err, ErrClosed) {
 			t.Fatalf("座位 %d 过牌失败: %v", seat, err)
 		}
 	}
