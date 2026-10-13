@@ -23,6 +23,7 @@ import (
 
 	"github.com/aleksey-45/majspirit/internal/api"
 	"github.com/aleksey-45/majspirit/internal/auth"
+	"github.com/aleksey-45/majspirit/internal/history"
 	"github.com/aleksey-45/majspirit/internal/room"
 	"github.com/aleksey-45/majspirit/internal/store"
 	"github.com/aleksey-45/majspirit/internal/user"
@@ -123,9 +124,10 @@ func run(ctx context.Context, cfg config) error {
 	mux.Handle("GET /{$}", web.Handler())
 
 	// ④ 用户系统与 /api/*。依赖在这里组装：pool 满足 user.Repo（结构化类型），
-	// revoker 建一次、由 Logout 与 Authenticate 共用。
+	// revoker 建一次、由 Logout 与 Authenticate 共用。hist 同理满足 history.Repo。
 	svc := user.New(pool, cfg.JWTSecret, cfg.TokenTTL, auth.NewRevoker())
-	mux.Handle("/api/", api.NewRouter(svc))
+	hist := history.New(pool)
+	mux.Handle("/api/", api.NewRouter(svc, hist))
 	// WebSocket 入口不在 /api/ 下（协议 §2.1），也不走 api.NewRouter：
 	// ws 与 api 互不认识，由这里分开挂上。svc 同时满足 ws.Authenticator。
 	//
