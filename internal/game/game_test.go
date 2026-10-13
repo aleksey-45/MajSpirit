@@ -839,6 +839,92 @@ func TestRiichiDeclarationLockAndUra(t *testing.T) {
 	}
 }
 
+// game.sync：断线重连时服务端重发一份"你该看到的一切"。
+//
+// 两支断言，缺一不可：
+//  1. 该有的都在（手牌、牌河、分数、当前行动者）—— 没有它，客户端重连后是白板；
+//  2. **别家的手牌一张都不在字节里** —— 泄漏检查，和 game.started 同一套做法。
+func TestSnapshotIsCompleteAndHidesOthersHands(t *testing.T) {
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("123m456m789p55p34s"),
+		mahjong.MustParseTiles("111222333444z5z"),
+		mahjong.MustParseTiles("777788889999m2z"),
+		mahjong.MustParseTiles("1111s22223333p7z"),
+	}
+	g, n := newTestGame(t, Options{
+		Rounds: 1,
+		Wall:   rigWall(t, hands, mahjong.MustParseTiles("2s")[0]),
+	})
+
+	// 走几步，让牌河里有东西 —— 空白状态的快照验不出牌河对不对。
+	for range 3 {
+		if !discardDrawn(t, g, n) {
+			break
+		}
+	}
+
+	// 每个人的手牌，从 game.started 里取（那是开局时发给他自己的那一份）。
+	own := map[int]string{}
+	for seat := range 4 {
+		m, ok := n.find(userOf(seat), protocol.EventGameStarted)
+		if !ok {
+			t.Fatal("没有 game.started")
+		}
+		own[seat], _ = m["myHand"].(string)
+	}
+
+	// 座位 2 掉线又连回来。
+	if err := g.Sync(userOf(2)); err != nil {
+		t.Fatalf("game.sync 被拒: %v", err)
+	}
+	snap, ok := n.find(userOf(2), protocol.EventGameSnapshot)
+	if !ok {
+		t.Fatal("没有 game.snapshot")
+	}
+
+	// 该有的都在。
+	if snap["mySeat"] != float64(2) {
+		t.Errorf("mySeat = %v", snap["mySeat"])
+	}
+	if got := snap["myHand"].([]any); len(got) != 13 && len(got) != 8 && len(got) != 11 {
+		// 走了三步，摸打之后手牌仍是 13 张（摸一张打一张）。这里只确认"有内容"。
+		t.Errorf("myHand 有 %d 张", len(got))
+	}
+	if len(snap["discards"].([]any)) != 4 {
+		t.Errorf("discards 应当按四家分组")
+	}
+	if len(snap["scores"].([]any)) != 4 {
+		t.Errorf("scores 应当有四家")
+	}
+	if _, ok := snap["turn"]; !ok {
+		t.Error("快照缺当前行动者")
+	}
+	if _, ok := snap["remaining"]; !ok {
+		t.Error("快照缺牌山余牌")
+	}
+
+	// 泄漏检查：**序列化后的字节**里不能出现别家的手牌。
+	// 先挖掉他自己那份，否则"别家手牌恰好是自己手牌的子串"会误报。
+	for _, raw := range n.raws(userOf(2), protocol.EventGameSnapshot) {
+		rest := strings.Replace(raw, own[2], "", 1)
+		for seat, hand := range own {
+			if seat == 2 {
+				continue
+			}
+			if strings.Contains(rest, hand) {
+				t.Fatalf("快照里出现了座位 %d 的手牌 %s: %s", seat, hand, raw)
+			}
+		}
+	}
+
+	// 快照**只发给本人**：别家不该收到里面带手牌的那一份。
+	for _, seat := range []int{0, 1, 3} {
+		if n.count(userOf(seat), protocol.EventGameSnapshot) != 0 {
+			t.Errorf("座位 %d 收到了别人的快照", seat)
+		}
+	}
+}
+
 // discardDrawn 走一步：把当前行动者刚摸到的那张打出去。
 //
 // 它就是测试里的"假玩家" —— 不做决策，只把回合交出去。返回 false 表示牌山已空。

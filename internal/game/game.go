@@ -250,6 +250,7 @@ const (
 	cmdPon
 	cmdKan
 	cmdRiichi
+	cmdSync
 )
 
 type command struct {
@@ -278,6 +279,8 @@ func (g *Game) handle(c command) {
 		err = g.doKan(c.id, c.text, c.tile)
 	case cmdRiichi:
 		err = g.doRiichi(c.id, c.tile)
+	case cmdSync:
+		err = g.doSync(c.id)
 	}
 	c.reply <- err
 }
