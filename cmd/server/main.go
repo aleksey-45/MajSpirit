@@ -133,7 +133,8 @@ func run(ctx context.Context, cfg config) error {
 	mux.Handle("/api/", api.NewRouter(svc))
 	// WebSocket 入口。刻意不在 /api/ 下（协议 §2.1），也不走 api.NewRouter：
 	// ws 与 api 互不认识，由这里把它们分开挂上，各自不需要知道对方存在。
-	mux.Handle("GET /ws", ws.Handler())
+	// svc 同时满足 api.UserService 和 ws.Authenticator（结构化类型，不需要它知道）。
+	mux.Handle("GET /ws", ws.NewHandler(svc))
 
 	srv := &http.Server{
 		Handler: mux,
