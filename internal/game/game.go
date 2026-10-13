@@ -94,6 +94,8 @@ type Game struct {
 	deadline time.Time
 	// claim 非 nil 表示正在等鸣牌回应。此时 deadline 是**窗口**的截止时刻。
 	claim *claim
+	// rinshanDraw 标记当前这张是岭上摸的 —— 岭上开花那个役就看它。
+	rinshanDraw bool
 }
 
 // New 开一场并起它的 goroutine。
@@ -196,6 +198,13 @@ func (g *Game) Pon(userID int64) error {
 	return g.call(command{kind: cmdPon, id: userID})
 }
 
+// Kan 是 game.kan。kind 取 "open" / "added" / "closed"（协议 §5.3）。
+//
+// 明杠走鸣牌窗口，不从这里走 —— 这里只收加杠与暗杠。
+func (g *Game) Kan(userID int64, kind string, tile mahjong.Tile) error {
+	return g.call(command{kind: cmdKan, id: userID, text: kind, tile: tile})
+}
+
 // Close 停掉这一场并等 goroutine 退出。可以重复调用。
 func (g *Game) Close() {
 	g.shutdown()
@@ -230,6 +239,7 @@ const (
 	cmdPass
 	cmdChi
 	cmdPon
+	cmdKan
 )
 
 type command struct {
@@ -237,6 +247,7 @@ type command struct {
 	id    int64
 	tile  mahjong.Tile
 	chi   [2]mahjong.Tile
+	text  string
 	reply chan error
 }
 
@@ -253,6 +264,8 @@ func (g *Game) handle(c command) {
 		err = g.doChi(c.id, c.chi)
 	case cmdPon:
 		err = g.doPon(c.id)
+	case cmdKan:
+		err = g.doKan(c.id, c.text, c.tile)
 	}
 	c.reply <- err
 }

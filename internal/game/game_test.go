@@ -513,6 +513,89 @@ func TestPonBeatsChiAndMelderDiscards(t *testing.T) {
 	}
 }
 
+// 暗杠：手里四张收进副露 → 从**岭上**摸一张 → 多翻一张宝牌指示牌 → 还是自己打。
+//
+// 三件事一起验，因为它们是一次动作的三个结果：只验"副露多了个杠"会漏掉
+// "摸到了不该摸的牌"或者"新宝牌没发出去"。
+func TestClosedKanDrawsRinshanAndRevealsDora(t *testing.T) {
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("1111m234567s999p"), // 四张一万，能暗杠
+		mahjong.MustParseTiles("2222m333s444s555p"),
+		mahjong.MustParseTiles("3333m666s777s888p"),
+		mahjong.MustParseTiles("4444m999s111p222p"),
+	}
+	g, n := newTestGame(t, Options{
+		Rounds: 1,
+		Wall:   rigWall(t, hands, mahjong.MustParseTiles("1z")[0]),
+	})
+
+	if err := g.Kan(userOf(0), "closed", mahjong.MustParseTiles("1m")[0]); err != nil {
+		t.Fatalf("暗杠被拒: %v", err)
+	}
+
+	meld, ok := n.find(userOf(0), protocol.EventGameMeld)
+	if !ok {
+		t.Fatal("没有 game.meld")
+	}
+	if meld["kind"] != "kan" || meld["closed"] != true {
+		t.Errorf("meld = %v, 期望暗杠（closed=true）", meld)
+	}
+
+	// 岭上摸的那张：带 rinshan 标记，而且只给摸牌者本人看到牌面。
+	var sawRinshan bool
+	for _, raw := range n.raws(userOf(0), protocol.EventGameDrew) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["rinshan"] == true {
+			sawRinshan = true
+			if _, has := m["tile"]; !has {
+				t.Error("岭上摸牌者应当看到自己摸到什么")
+			}
+		}
+	}
+	if !sawRinshan {
+		t.Error("杠之后没有从岭上摸牌")
+	}
+	for _, seat := range []int{1, 2, 3} {
+		for _, raw := range n.raws(userOf(seat), protocol.EventGameDrew) {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(raw), &m); err != nil {
+				t.Fatal(err)
+			}
+			if m["rinshan"] == true {
+				if _, has := m["tile"]; has {
+					t.Errorf("座位 %d 看到了别人岭上摸的牌", seat)
+				}
+			}
+		}
+	}
+
+	// 新宝牌是**公开**信息：四个人都该收到，count 从 1 变 2。
+	dora, ok := n.find(userOf(2), protocol.EventGameDoraRevealed)
+	if !ok {
+		t.Fatal("杠了却没有新宝牌指示牌")
+	}
+	if dora["kind"] != "dora" || dora["count"] != float64(2) {
+		t.Errorf("doraRevealed = %v, 期望 dora / count 2", dora)
+	}
+
+	// 杠不换人：摸完岭上还是自己打。
+	turn, _ := n.find(userOf(0), protocol.EventGameTurn)
+	if turn["seat"] != float64(0) {
+		t.Errorf("杠之后该由自己打，实际座位 %v", turn["seat"])
+	}
+	if err := g.Discard(userOf(0), mahjong.MustParseTiles("2s")[0]); err != nil {
+		t.Errorf("杠之后应当能直接打牌，实际 %v", err)
+	}
+
+	// 不是自己的回合不能暗杠。
+	if err := g.Kan(userOf(1), "closed", mahjong.MustParseTiles("2m")[0]); err == nil {
+		t.Error("不是自己的回合，却允许了暗杠")
+	}
+}
+
 // rigWall 摆一副完全确定的牌山：前 52 张就是四家的手牌、第 53 张是庄家的第一次摸牌，
 // 其余按一副完整的牌补足到 136 张。
 func rigWall(t *testing.T, hands [4][]mahjong.Tile, dealerDraw mahjong.Tile) *mahjong.Wall {

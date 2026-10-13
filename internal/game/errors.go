@@ -18,3 +18,6 @@ var (
 
 // ErrNoClaim 表示现在没有可以鸣的牌，或者这个座位没有鸣它的资格。
 var ErrNoClaim = errors.New("现在没有可以鸣的牌")
+
+// ErrMaxKan 表示杠数到了上限（四个）。这是规则上限，不是牌山不够。
+var ErrMaxKan = errors.New("杠数已达上限")

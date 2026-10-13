@@ -28,6 +28,7 @@ func (g *Game) winInput(seat int, tile mahjong.Tile, tsumo bool) mahjong.WinInpu
 		WinnerSeat:     seat,
 		DealerSeat:     g.dealer,
 		Honba:          g.honba,
+		IsRinshan:      g.rinshanDraw,
 		DoraIndicators: g.wall.DoraIndicators(),
 		PaoSeat:        mahjong.NoSeat, // 帕奥责任者还没接（必须在鸣牌那一刻记下）
 	}

@@ -67,6 +67,7 @@ func (g *Game) draw() {
 	g.hands[g.turn].Add(t)
 	g.drawn = true
 	g.awaitingDiscard = true
+	g.rinshanDraw = false
 
 	seat, remaining := g.turn, g.wall.Remaining()
 	g.broadcast(fact{typ: protocol.EventGameDrew, forSeat: func(viewer int) any {

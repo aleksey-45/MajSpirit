@@ -26,7 +26,9 @@ import (
 type claim struct {
 	from     int
 	tile     mahjong.Tile
-	eligible []int // 有资格的座位，按"离放铳者由近到远"排好
+	eligible []int  // 有资格的座位，按"离放铳者由近到远"排好
+	trigger  string // "discard" 或 "kan"（抢杠）—— 只影响事件里的字段和收尾
+	kanSeat  int    // >= 0 表示这是抢杠窗口：没人抢就由这个座位把杠完成
 	options  map[int][]string
 	answered map[int]bool
 	deadline time.Time
@@ -43,6 +45,8 @@ func (g *Game) openClaimWindow(from int, tile mahjong.Tile) {
 	c := &claim{
 		from:     from,
 		tile:     tile,
+		trigger:  "discard",
+		kanSeat:  -1,
 		options:  map[int][]string{},
 		answered: map[int]bool{},
 		ron:      map[int]bool{},
@@ -69,7 +73,7 @@ func (g *Game) openClaimWindow(from int, tile mahjong.Tile) {
 	deadlineMs := c.deadline.UnixMilli()
 	for _, seat := range c.eligible {
 		g.emitTo(seat, fact{typ: protocol.EventGameClaimWindow, data: gameClaimWindowView{
-			Trigger:    "discard",
+			Trigger:    c.trigger,
 			FromSeat:   from,
 			Tile:       formatTile(tile),
 			Options:    c.options[seat],
@@ -164,7 +168,7 @@ func (g *Game) resolveClaim() {
 
 	seat, kind := c.pick()
 
-	closed := gameClaimClosedView{Trigger: "discard", Seat: -1}
+	closed := gameClaimClosedView{Trigger: c.trigger, Seat: -1}
 	if seat >= 0 {
 		closed.ResolvedBy, closed.Seat = kind, seat
 	}
@@ -182,6 +186,10 @@ func (g *Game) resolveClaim() {
 		}
 		g.settleWin(seat, c.from, c.tile, false, res)
 
+	case "kan":
+		g.applyOpenKan(seat, c.tile, c.from)
+		g.afterKan(seat)
+
 	case "pon":
 		m := g.applyPon(seat, c.tile)
 		g.growMelds(seat, m, c.from, c.tile)
@@ -193,6 +201,11 @@ func (g *Game) resolveClaim() {
 		g.beginMeldTurn(seat)
 
 	default:
+		// 抢杠窗口里没人抢：杠照成。普通鸣牌窗口没人鸣：轮到下家。
+		if c.kanSeat >= 0 {
+			g.completeAddedKan(c.kanSeat, c.tile)
+			return
+		}
 		g.nextTurn()
 	}
 }

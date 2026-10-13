@@ -33,6 +33,9 @@ func (g *Game) claimOptions(seat, from int, tile mahjong.Tile) []string {
 	if mahjong.CanPon(hand, tile) {
 		opts = append(opts, "pon")
 	}
+	if mahjong.CanKanOpen(hand, tile) {
+		opts = append(opts, "kan")
+	}
 	// 吃：只有放铳者的下家。
 	if seat == (from+1)%4 && len(mahjong.ChiOptions(hand, tile)) > 0 {
 		opts = append(opts, "chi")
@@ -197,4 +200,17 @@ func meldKindName(k mahjong.MeldKind) string {
 	default:
 		return "pair"
 	}
+}
+
+// sameKindIn 报告 list 里有没有和 t **同种**的牌。
+//
+// 用种类而不是精确相等：规则层给的候选（ClosedKanTiles / AddedKanTiles）是按种类
+// 算出来的，赤五和普通五是同一种。
+func sameKindIn(list []mahjong.Tile, t mahjong.Tile) bool {
+	for _, x := range list {
+		if x.Kind() == t.Kind() {
+			return true
+		}
+	}
+	return false
 }

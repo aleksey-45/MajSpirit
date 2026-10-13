@@ -31,6 +31,8 @@ type gameDrewView struct {
 	Seat      int    `json:"seat"`
 	Tile      string `json:"tile,omitempty"`
 	Remaining int    `json:"remaining"`
+	// Rinshan 标记这张是杠后从岭上摸的 —— 客户端据此区分"摸牌"与"岭上摸牌"。
+	Rinshan bool `json:"rinshan,omitempty"`
 }
 
 type gameDiscardedView struct {
@@ -208,4 +210,15 @@ type gameMeldView struct {
 	Tiles    []string `json:"tiles"`
 	FromSeat int      `json:"fromSeat"`
 	Taken    string   `json:"taken"`
+	// Closed 只对暗杠为 true —— 前端据此决定那四张是盖着还是亮着。
+	Closed bool `json:"closed"`
+}
+
+// gameDoraView 是新翻开的宝牌指示牌。它是**公开**信息（杠了大家都看得到），走广播。
+//
+// 里宝指示牌不走这条事件 —— 它只在立直且和牌时随结算揭示，提前发等于漏牌。
+type gameDoraView struct {
+	Kind      string `json:"kind"` // dora / ura
+	Indicator string `json:"indicator"`
+	Count     int    `json:"count"`
 }
