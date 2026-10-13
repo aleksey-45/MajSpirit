@@ -30,3 +30,55 @@ func TestHandlerServesPage(t *testing.T) {
 		}
 	}
 }
+
+// TestAppHandlerServesScript 守住"客户端脚本真的发得出去"。
+//
+// 这条路 404 的话牌桌页整块是死的，而浏览器只会报一行不显眼的 module 解析失败。
+func TestAppHandlerServesScript(t *testing.T) {
+	rec := httptest.NewRecorder()
+	AppHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/app/state.js", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /app/state.js = %d, 期望 200", rec.Code)
+	}
+	// module 脚本的 MIME 不对，浏览器会拒绝执行（严格 MIME 检查）。
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("Content-Type = %q, 期望含 javascript", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "export function applyEvent") {
+		t.Error("发出去的不是 state.js")
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q，期望 no-store（改了脚本刷新就该生效）", got)
+	}
+}
+
+// TestTilesHandlerServesSVG 守住牌面能取到：它是牌桌页唯一的图片资源。
+func TestTilesHandlerServesSVG(t *testing.T) {
+	rec := httptest.NewRecorder()
+	TilesHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tiles/Man1.svg", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /tiles/Man1.svg = %d, 期望 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "image/svg+xml") {
+		t.Errorf("Content-Type = %q, 期望 image/svg+xml", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "<svg") {
+		t.Error("发出去的不是 SVG")
+	}
+}
+
+// TestTilesHandlerRefusesNonSVG 守住"牌面路由只发牌面"。
+//
+// 那个目录里还有 SOURCE.md 与 LICENSE.md；漏出去不算安全事故，但会让"这条路由
+// 负责什么"变成一句空话 —— 后来往目录里丢任何文件都会自动出现在公网路径上。
+func TestTilesHandlerRefusesNonSVG(t *testing.T) {
+	for _, path := range []string{"/tiles/SOURCE.md", "/tiles/LICENSE.md", "/tiles/"} {
+		rec := httptest.NewRecorder()
+		TilesHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d，期望 404", path, rec.Code)
+		}
+	}
+}

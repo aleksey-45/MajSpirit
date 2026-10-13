@@ -1,0 +1,9 @@
+{
+  "name": "majspirit-web",
+  "private": true,
+  "type": "module",
+  "description": "只为了让 node 把 web/app/*.js 当 ES module 跑用例。没有依赖，不需要 npm install。",
+  "scripts": {
+    "test": "node --test"
+  }
+}

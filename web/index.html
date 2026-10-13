@@ -3,29 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MajSpirit 调试客户端</title>
+<title>MajSpirit 客户端</title>
+<!-- 用一张牌当图标：顺手把浏览器的 /favicon.ico 404 也消掉 -->
+<link rel="icon" href="/tiles/Chun.svg">
+<link rel="stylesheet" href="/app/table.css">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
+  /* 这一条是给 #login-box / #lobby-box 用的：table.css 里的 .hidden 只匹配 `.view.hidden`，
+     少了它，面板的类切了但样式没生效 —— 登录页会同时显示登录框和大厅框。 */
+  .hidden { display: none !important; }
+  /* 滚动条一出现，容器宽度就少掉一条滚动条的宽度（~15px），而 fit() 是在那之前算的 ——
+     方桌会偏几像素。预留滚动条位置，宽度就不会在渲染中途变。 */
+  html { scrollbar-gutter: stable; }
   body { margin: 0; font: 13px/1.5 ui-monospace, Consolas, "Courier New", monospace;
          background: #14161a; color: #d7dae0; }
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-wrap: wrap;
            background: #1c1f26; border-bottom: 1px solid #2b3038; }
   h1 { margin: 0; font-size: 15px; font-weight: 600; }
   #state { padding: 2px 8px; border-radius: 10px; font-size: 12px;
            background: #3a2b2b; color: #ff9a9a; }
   #state.on { background: #23372b; color: #86e0a0; }
+  .tabs { display: flex; gap: 1px; }
+  .tab { font: inherit; padding: 3px 14px; background: #23262e; color: #8b93a1;
+         border: 1px solid #2b3038; cursor: pointer; }
+  .tab.on { background: #14161a; color: #fff; }
+  details#conn { margin-left: auto; }
+  details#conn summary { cursor: pointer; color: #8b93a1; }
+  details#conn .body { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+                       padding: 8px 0 2px; }
   #close { display: none; margin: 12px 16px 0; padding: 10px 12px; border-radius: 4px;
            background: #3a2b2b; color: #ffb4b4; }
   #close.show { display: block; }
   #close b { font-size: 17px; }
-  main { display: grid; grid-template-columns: 350px 1fr; gap: 1px;
-         background: #2b3038; height: calc(100vh - 46px); }
-  section { background: #14161a; overflow: auto; padding: 12px 16px; }
   label { display: block; margin: 12px 0 4px; color: #8b93a1; font-size: 12px; }
   input, textarea, button { font: inherit; background: #1c1f26; color: #d7dae0;
                             border: 1px solid #2b3038; border-radius: 4px; padding: 5px 8px; }
   input, textarea { width: 100%; }
+  details#conn input { width: auto; }
+  details#conn #url, details#conn #token { width: 260px; }
   textarea { resize: vertical; }
   button { cursor: pointer; }
   button:hover { background: #262b34; }
@@ -42,230 +58,690 @@
   .dir { flex: none; width: 12px; text-align: center; }
   .up { color: #7fb3ff; }
   .down { color: #86e0a0; }
-  .type { flex: none; width: 120px; overflow: hidden; text-overflow: ellipsis;
+  .type { flex: none; width: 130px; overflow: hidden; text-overflow: ellipsis;
           white-space: nowrap; color: #e6c07b; }
-  .data { white-space: pre-wrap; word-break: break-all; }
+  .data { white-space: pre-wrap; word-break: break-all; color: #6e7683; }
   .sys .type, .sys .data { color: #8b93a1; }
+  .close .type { color: #ff9a9a; }
+  main#view-debug { display: grid; grid-template-columns: 350px 1fr; gap: 1px;
+                    background: #2b3038; height: calc(100vh - 46px); }
+  main#view-debug section { background: #14161a; overflow: auto; padding: 12px 16px; }
+
+  /* ── 大厅：账号、密码、创建房间、开始游戏（按房间码加入）、历史牌局 ── */
+  main#view-lobby { display: flex; justify-content: center; padding: 28px 16px; }
+  .lobby-card { width: 460px; background: #14161a; border: 1px solid #2b3038; padding: 20px 22px; }
+  .lobby-card h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; color: #fff; }
+  .lobby-card h2 span { font-size: 12px; font-weight: 400; color: #6e7683; }
+  .field { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .field label { margin: 0; width: 52px; flex: none; }
+  .field input { flex: 1; }
+  .lobby-card hr { border: none; border-top: 1px solid #2b3038; margin: 16px 0; }
+  .lobby-card .row { margin-top: 10px; }
+  .msg { margin-top: 14px; min-height: 20px; color: #e6c07b; font-size: 12.5px; }
+  .msg.bad { color: #ff9a9a; }
+  .history { margin-top: 10px; font-size: 12.5px; }
+  .history .hrow { display: flex; gap: 12px; padding: 3px 0; border-bottom: 1px solid #1e2229; }
+  .history .hrow .rank { color: #e0c46c; }
+  .history .hrow .pts { margin-left: auto; }
+  .history .hrow .pts.plus { color: #86e0a0; }
+  .history .hrow .pts.minus { color: #ff9a9a; }
+
+  /* ── 房间条：进了房间、还没开局时那一段（准备 / 开局 / 离开） ── */
+  #room-bar { display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+              background: #1c1f26; border-bottom: 1px solid #2b3038; }
+  #room-bar.hidden { display: none; }
+  #room-bar .rb-id { color: #e6c07b; letter-spacing: 1px; }
+  #room-bar .rb-info { color: #8b93a1; font-size: 12.5px; }
+  #room-bar .rb-gap { margin-left: auto; }
+  #room-bar button:disabled { opacity: .45; cursor: not-allowed; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>MajSpirit 调试客户端</h1>
+  <h1>MajSpirit</h1>
   <span id="state">未连接</span>
-  <span class="hint">协议：docs/local/协议.md §4</span>
+  <nav class="tabs">
+    <button class="tab on" id="tab-lobby">大厅</button>
+    <button class="tab" id="tab-table">牌桌</button>
+    <button class="tab" id="tab-debug">调试</button>
+  </nav>
 </header>
 
 <div id="close"></div>
 
-<main>
-<section>
-  <label>服务端地址</label>
-  <input id="url">
+<main id="view-lobby" class="view">
+  <div class="lobby-card">
+    <h2>雀灵麻将 <span>MajSpirit</span></h2>
 
-  <div class="row">
-    <button id="connect" class="primary">连接</button>
-    <button id="disconnect">断开全部</button>
-  </div>
+    <!-- 未登录：只有账号和密码 -->
+    <div id="login-box">
+      <div class="field"><label>账号</label><input id="lobby-user" autocomplete="username" placeholder="用户名"></div>
+      <div class="field"><label>密码</label><input id="lobby-pass" type="password" autocomplete="current-password" placeholder="密码"></div>
+      <div class="row">
+        <button id="lobby-login" class="primary">登录</button>
+        <button id="lobby-register">注册</button>
+      </div>
+    </div>
 
-  <label>票（JWT）</label>
-  <textarea id="token" rows="3" placeholder="POST /api/login 返回的 token"></textarea>
+    <!-- 已登录：账号只用来显示。密码不属于大厅 —— 它只活在登录那一步。 -->
+    <div id="lobby-box" class="hidden">
+      <div class="row" style="align-items:center">
+        <label style="width:52px;margin:0">账号</label>
+        <b id="lobby-who" style="color:#fff"></b>
+        <button id="lobby-logout" style="margin-left:auto">退出</button>
+      </div>
 
-  <label>取票（同源请求，省一次 curl）</label>
-  <input id="username" placeholder="用户名">
-  <div class="row" style="margin-top:6px">
-    <input id="password" type="password" placeholder="密码">
-  </div>
-  <div class="row">
-    <button id="login">登录取票</button>
-    <button id="register">注册</button>
-  </div>
+      <hr>
 
-  <label>行为</label>
-  <div class="row">
-    <label><input type="checkbox" id="autoAuth" checked> 连上自动发 auth</label>
-  </div>
-  <div class="row">
-    <label><input type="checkbox" id="autoPong" checked> 自动回 pong</label>
-  </div>
-  <div class="hint">取消「自动回 pong」后，最长 20 秒（15s 间隔 + 5s 等待）
-    会被服务端以 <b>4408</b> 关闭。不发 auth 则 5 秒后被 <b>4401</b> 关闭。</div>
+      <div class="field"><label>房间码</label><input id="lobby-room" maxlength="6" placeholder="6 位，如 7KQ2ZP"></div>
+      <div class="row">
+        <button id="lobby-create" class="primary">创建房间</button>
+        <button id="lobby-join">开始游戏</button>
+      </div>
+      <div class="hint" style="margin:6px 0 0">没有房间码就「创建房间」，把码念给另外三家；有码就「开始游戏」加入</div>
 
-  <label>发送（信封 JSON）</label>
-  <textarea id="payload" rows="3">{"type":"ping","data":{}}</textarea>
-  <div class="row">
-    <button id="send" class="primary">发送</button>
-    <button id="bad">发非法 JSON</button>
-  </div>
-  <div class="hint">非法 JSON 会被服务端以 <b>4400</b> 关闭。</div>
+      <hr>
 
-  <div class="row">
-    <button id="replace">再开一条连接顶号</button>
-  </div>
-  <div class="hint">同一张票再连一条，旧的那条会收到 <b>4403</b>（协议 §4.6）。</div>
+      <div class="row"><button id="lobby-history">历史牌局</button></div>
+      <div id="lobby-history-list" class="history"></div>
+    </div>
 
-  <div class="row">
-    <button id="clear">清空日志</button>
+    <div id="lobby-msg" class="msg"></div>
   </div>
-</section>
-
-<section id="log"></section>
 </main>
 
-<script>
-(() => {
-  'use strict';
+<main id="view-table" class="view view-table">
+  <!-- 房间条：从"进了房间"到"开局"之间需要它 —— 那一段没有牌可打，
+       而准备与开局在协议里是两条独立指令（§5.2）。开局之后整条收起来：
+       中局的 room.leave 是认输并解散整间房，不该放在手边。 -->
+  <div id="room-bar" class="hidden">
+    <span class="rb-id" id="rb-id"></span>
+    <span class="rb-info" id="rb-info"></span>
+    <span class="rb-gap"></span>
+    <button id="rb-ready">准备</button>
+    <button id="rb-start" class="primary">开局</button>
+    <button id="rb-leave">离开</button>
+  </div>
+  <div class="layoutA">
+    <div>
+      <div class="zone-wrap">
+        <div class="zone" id="zone"></div>
+        <div class="result-layer" id="result"></div>
+      </div>
+      <div class="actions" id="actions"></div>
+    </div>
+    <div class="col-side">
+      <div class="log js-log" id="log-table"></div>
+      <div class="prompt"><span class="ps1" id="ps1">majspirit</span>:~$
+        <input id="cmd" placeholder="discard 7p / create / join 7KQ2ZP / help"
+               style="width:70%;border:none;background:transparent;color:#e6e6e6">
+      </div>
+    </div>
+  </div>
+</main>
 
-  const $ = id => document.getElementById(id);
-  const logBox = $('log');
-  const conns = [];
-  let n = 0;
+<main id="view-debug" class="view hidden">
+  <section>
+    <details id="conn" open>
+      <summary>连接（调试用：这里手动填票、手动连）</summary>
+      <label>服务端地址</label>
+      <input id="url" title="服务端地址">
+      <label>票（JWT）</label>
+      <input id="token" placeholder="POST /api/login 返回的 token">
+      <label>取票（同源请求）</label>
+      <input id="username" placeholder="用户名">
+      <input id="password" type="password" placeholder="密码">
+      <div class="row">
+        <button id="login">登录取票</button>
+        <button id="register">注册</button>
+        <button id="connect" class="primary">连接</button>
+        <button id="disconnect">断开</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="autoAuth" checked> 连上自动发 auth</label>
+        <label><input type="checkbox" id="autoPong" checked> 自动回 pong</label>
+      </div>
+    </details>
 
-  const CLOSE_CODES = {
-    1000: '正常关闭',
-    1001: '对端离开',
-    1006: '没有收到关闭帧（连接被直接掐断）',
-    1009: '消息过大',
-    1011: '服务端内部错误',
-    4400: '协议错误',
-    4401: '未认证 / 认证失败',
-    4403: '被服务端拒绝（在别处登录）',
-    4408: '心跳超时',
-  };
+    <label>行为</label>
+    <div class="hint">取消「自动回 pong」后，最长 20 秒（15s 间隔 + 5s 等待）会被服务端以
+      <b>4408</b> 关闭。不发 auth 则 5 秒后被 <b>4401</b> 关闭。</div>
 
-  const clock = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  const isOpen = h => h.ws.readyState === WebSocket.OPEN;
+    <label>发送（信封 JSON）</label>
+    <textarea id="payload" rows="3">{"type":"ping","data":{}}</textarea>
+    <div class="row">
+      <button id="send" class="primary">发送</button>
+      <button id="bad">发非法 JSON</button>
+    </div>
+    <div class="hint">非法 JSON 会被服务端以 <b>4400</b> 关闭。</div>
 
-  function add(h, dir, type, data, sys) {
-    const row = document.createElement('div');
-    row.className = 'entry' + (sys ? ' sys' : '');
-    const cells = [
-      ['t', clock()],
-      ['dir ' + dir, dir === 'up' ? '↑' : dir === 'down' ? '↓' : '·'],
-      ['type', (h ? h.tag + ' ' : '') + type],
-      ['data', data],
-    ];
-    for (const [cls, text] of cells) {
-      const el = document.createElement('span');
-      el.className = cls;
-      el.textContent = text;
-      row.append(el);
-    }
-    logBox.append(row);
-    logBox.scrollTop = logBox.scrollHeight;
+    <div class="row">
+      <button id="replace">再开一条原始连接顶号</button>
+    </div>
+    <div class="hint">同一张票再连一条，旧的那条会收到 <b>4403</b>（协议 §4.6）。</div>
+
+    <div class="row">
+      <button id="clear">清空日志</button>
+    </div>
+  </section>
+  <section class="log js-log" id="log"></section>
+</main>
+
+<script type="module">
+import { createSession } from '/app/wire.js';
+import { render, timerText } from '/app/render.js';
+import { applyEvent } from '/app/state.js';
+import { parseCommand, kanKind } from '/app/cmd.js';
+
+const $ = (id) => document.getElementById(id);
+const view = { mode: null, picked: [], hint: '' };   // 出牌交互的临时状态
+let rawSockets = [];
+
+/* ── 日志：两个视图共用一份，所以往所有 .js-log 里贴 ── */
+function addLog({ kind, text, raw }) {
+  const dir = kind === 'up' ? '↑' : kind === 'down' ? '↓' : '·';
+  const row = document.createElement('div');
+  row.className = 'entry ' + kind;
+  const cells = [
+    ['t', new Date().toLocaleTimeString('zh-CN', { hour12: false })],
+    ['dir ' + (kind === 'up' ? 'up' : kind === 'down' ? 'down' : ''), dir],
+    ['type', text],
+    ['data', raw && raw !== text ? raw : ''],
+  ];
+  for (const [cls, value] of cells) {
+    const el = document.createElement('span');
+    el.className = cls;
+    el.textContent = value;
+    row.append(el);
   }
-
-  const note = msg => add(null, 'sys', 'sys', msg, true);
-
-  function setState() {
-    const alive = conns.filter(isOpen).length;
-    $('state').textContent = alive ? '已连接 × ' + alive : '未连接';
-    $('state').classList.toggle('on', alive > 0);
+  for (const box of document.querySelectorAll('.js-log')) {
+    box.append(row.cloneNode(true));
+    box.scrollTop = box.scrollHeight;
   }
+}
 
-  function showClose(h, code, reason) {
-    const known = CLOSE_CODES[code];
+function note(text) {
+  addLog({ kind: 'sys', text });
+}
+
+/* ── 状态灯与关闭码横幅（保留调试页原来那套） ── */
+function refreshChrome() {
+  const alive = session.state === 'open';
+  $('state').textContent = session.state === 'open' ? '已连接' : session.state === 'connecting' ? '连接中' : '未连接';
+  $('state').classList.toggle('on', alive);
+  $('ps1').textContent = session.view.user ? 'majspirit@' + session.view.user.username : 'majspirit';
+  refreshRoom();
+}
+
+/* ── 房间条：准备 / 开局 / 离开（协议 §5.2） ────────────────────────────────
+   状态一律从服务端事件折叠出来的 session.view 读，不自己记"我点了准备" ——
+   那是本地乐观状态，服务端拒绝时两边会不一致（比如房间已经开局了）。
+
+   只显示三件事，其余都在牌桌中央那块（render.js 画房间号与人数）：
+   我是谁、别人准备没准备、开局条件够不够。键帽的可用性也照着同一个判据算。 */
+function refreshRoom() {
+  const v = session.view;
+  const room = v.room;
+  const bar = $('room-bar');
+  const seats = (room && room.seats) || [];
+  const mine = room ? seats[room.mySeat] : null;
+
+  // 三条路都不显示：不在房间、自己已经不在座（刚离开）、对局已经开始。
+  if (!room || !mine || v.game) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+
+  const filled = seats.filter(Boolean).length;
+  const ready = seats.filter((s) => s && s.ready).length;
+  const canStart = Boolean(mine.isOwner) && filled === 4 && ready === 4;
+
+  $('rb-id').textContent = room.roomId || '';
+  $('rb-info').textContent =
+    `座位 ${room.mySeat} · ${filled}/4 人 · 已准备 ${ready}` + (mine.isOwner ? ' · 你是房主' : '');
+  $('rb-ready').textContent = mine.ready ? '取消准备' : '准备';
+  $('rb-start').disabled = !canStart;
+  $('rb-start').title = mine.isOwner
+    ? (canStart ? '' : '四人齐且全部准备才能开局')
+    : '只有房主能开局';
+}
+
+$('rb-ready').onclick = () => {
+  const room = session.view.room;
+  const mine = room && room.seats[room.mySeat];
+  if (!mine) return;
+  session.send('room.ready', { ready: !mine.ready });
+};
+$('rb-start').onclick = () => session.send('room.start', {});
+$('rb-leave').onclick = () => session.send('room.leave', {});
+
+const CLOSE_CODES = {
+  1000: '正常关闭', 1001: '对端离开', 1006: '没有收到关闭帧（连接被直接掐断）',
+  1009: '消息过大', 1011: '服务端内部错误', 4400: '协议错误', 4401: '未认证 / 认证失败',
+  4403: '被服务端拒绝（在别处登录）', 4408: '心跳超时',
+};
+
+const session = createSession({
+  url: () => $('url').value.trim(),
+  onLog: (e) => {
+    addLog(e);
+    if (e.kind !== 'close') { refreshChrome(); return; }
+
+    const m = /code=(\d+)/.exec(e.text || '');
+    const code = m ? Number(m[1]) : 0;
     const box = $('close');
     box.textContent = '';
     const head = document.createElement('b');
-    head.textContent = '关闭码 ' + code + (known ? ' — ' + known : '');
-    box.append(head, document.createTextNode(
-      '　' + h.tag + '　' + (reason || '（服务端没给原因）')));
+    head.textContent = '关闭码 ' + code + (CLOSE_CODES[code] ? ' — ' + CLOSE_CODES[code] : '');
+    box.append(head);
     box.classList.add('show');
-  }
 
-  // 解析不出 type 就照原样发出去：调试页要能发坏消息，那是它的用途之一。
-  function typeOf(text) {
-    try { return JSON.parse(text).type || '(没有 type)'; } catch { return '(坏 JSON)'; }
-  }
-
-  function send(h, text) {
-    if (!isOpen(h)) { note('没有活着的连接，发不出去'); return; }
-    h.ws.send(text);
-    add(h, 'up', typeOf(text), text);
-  }
-
-  function active() {
-    for (let i = conns.length - 1; i >= 0; i--) if (isOpen(conns[i])) return conns[i];
-    return null;
-  }
-
-  function connect() {
-    const url = $('url').value.trim();
-    if (!/^wss?:\/\//.test(url)) { note('地址要以 ws:// 或 wss:// 开头'); return; }
-
-    const tag = '#' + (++n);
-    const ws = new WebSocket(url);
-    const h = { tag, ws };
-    conns.push(h);
-    note(tag + ' 连接 ' + url);
-
-    ws.onopen = () => {
-      setState();
-      note(tag + ' 已升级到 WebSocket');
-      if (!$('autoAuth').checked) return;
-      const token = $('token').value.trim();
-      if (token) send(h, JSON.stringify({ type: 'auth', data: { token } }));
-      else note(tag + ' 票是空的，跳过 auth（5 秒后会被 4401 关掉）');
-    };
-
-    ws.onmessage = ev => {
-      let env;
-      try {
-        env = JSON.parse(ev.data);
-      } catch {
-        add(h, 'down', '(坏 JSON)', ev.data);
-        return;
-      }
-      add(h, 'down', env.type, ev.data);
-      if (env.type === 'ping' && $('autoPong').checked) {
-        send(h, JSON.stringify({ type: 'pong', data: { serverTime: Date.now() } }));
-      }
-    };
-
-    ws.onclose = ev => {
-      setState();
-      note(tag + ' 关闭 code=' + ev.code + ' reason=' + (ev.reason || '（空）'));
-      showClose(h, ev.code, ev.reason);
-    };
-
-    ws.onerror = () => note(tag + ' 出错，细节看浏览器控制台与服务端日志');
-  }
-
-  async function getToken(register) {
-    const path = register ? '/api/register' : '/api/login';
-    const body = JSON.stringify({ username: $('username').value, password: $('password').value });
-    try {
-      const resp = await fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      const text = await resp.text();
-      if (!resp.ok) { note(path + ' → ' + resp.status + ' ' + text.trim()); return; }
-      const data = JSON.parse(text);
-      if (data.token) {
-        $('token').value = data.token;
-        note(path + ' → 200，票已填入');
-      } else {
-        note(path + ' → ' + resp.status + '（注册没返票，再点「登录取票」）');
-      }
-    } catch (err) {
-      note(path + ' 请求失败：' + err);
+    // 断了就把大厅的话说清楚：认证过期等于票不能再用，顶号和心跳超时则只是这条连接没了。
+    if (code === 4401) {
+      store.clear();
+      signedIn();
+      show('lobby');
+      lobbyMsg('认证失败或过期，请重新登录', true);
+    } else if (code === 4403) {
+      show('lobby');
+      lobbyMsg('这个账号在别处登录了（被顶号）', true);
+    } else if (code === 4408) {
+      lobbyMsg('心跳超时，连接已断（调试视图里能复现）', true);
     }
+    refreshChrome();
+  },
+  onView: (v, env) => {
+    refreshChrome();
+    draw(v);
+
+    // 服务端确认的账号名才是权威的：本地存的只是"上次填的那个"。
+    if (env && env.type === 'authed' && v.user) store.save(store.token, v.user.username);
+    if (env && (env.type === 'room.joined' || env.type === 'room.created')) {
+      show('table');
+      lobbyMsg(v.room ? `已进入房间 ${v.room.roomId}（座位 ${v.room.mySeat}）` : '');
+    }
+    if (env && env.type === 'room.closed') {
+      show('lobby');
+      const why = v.roomClosed && v.roomClosed.reason === 'playerTimeout' ? '有人掉线，保座超时' : (v.roomClosed || {}).reason;
+      lobbyMsg(`房间已关闭：${why || '未知原因'}`, true);
+    }
+    // 房间层的拒绝（房间号不存在、满了、已在别的房间…）要在用户点按钮的地方说，
+    // 不能只落在事件流里 —— 那时用户正盯着大厅。
+    if (env && env.type === 'error') {
+      show(store.token && !v.room ? 'lobby' : 'table');
+      lobbyMsg(`服务端拒绝：${env.data.code} ${env.data.message}`, true);
+    }
+  },
+});
+
+/* ── 渲染：牌桌 + 动作键帽 ── */
+function draw(v) {
+  render(v, { armed: view.mode, hint: view.hint },
+    { zone: $('zone'), actions: $('actions'), result: $('result') });
+}
+
+// 读秒条不重画整张桌子，只改那一个文本节点（每 250ms 一次）。
+setInterval(() => {
+  const el = document.querySelector('#zone .timer');
+  if (el && session.view.game) el.textContent = timerText(session.view);
+}, 250);
+
+// 视口或容器宽度一变（拉窗口、开全屏投屏、滚动条出现/消失）就得重新缩放：
+// 方桌是按 min(宽, 高) 缩的。盯容器的宽度而不是 window 的 resize —— 后者盖不住
+// "只是容器变窄了"这种情形（实测：窄窗口里滚动条一出现就偏了 7px）。
+// 只比宽度，不看高度：fit 自己会改容器高度，盯高度会自己触发自己。
+let lastZoneWidth = 0;
+new ResizeObserver((entries) => {
+  const w = entries[0].contentRect.width;
+  if (Math.abs(w - lastZoneWidth) < 1) return;
+  lastZoneWidth = w;
+  draw(session.view);
+}).observe($('zone'));
+
+/* ── 出牌/立直：点自家手牌 ── */
+$('zone').addEventListener('click', (ev) => {
+  const cell = ev.target.closest('.cell[data-tile]');
+  if (!cell) return;
+  const tile = cell.dataset.tile;
+  const g = session.view.game;
+  // 客户端不判合法性，但没必要在自己明显不能动的时候乱发（服务端也会回 ILLEGAL_ACTION）。
+  if (!g || !g.turn || g.turn.seat !== g.mySeat) {
+    if (view.mode !== 'chi') note('不是自家手番，点牌不会发出去');
+    return;
   }
+  if (view.mode === 'chi') {
+    view.picked.push(tile);
+    if (view.picked.length === 2) {
+      session.send('game.chi', { tiles: view.picked });
+      view.picked = [];
+      view.mode = null;
+      view.hint = '';
+    } else {
+      view.hint = '吃：再点一张手牌（被吃的那张由服务端从牌河推出）';
+    }
+  } else if (view.mode === 'riichi') {
+    session.send('game.riichi', { tile });
+    view.mode = null;
+    view.hint = '';
+  } else if (view.mode === 'kan') {
+    // 暗杠/加杠：点的那张就是杠牌。发哪种 kind 由 kanKind 按这个优先级定：
+    // 服务端给的牌表 → 服务端给的动作 → （旧服务端才走）"碰过就是加杠"的推断。
+    // 服务端列了牌却没有这一张，kanKind 返回 null —— 不猜，也不发。
+    const kind = kanKind(tile, g.turn && g.turn, g.melds[g.mySeat] || []);
+    if (kind) session.send('game.kan', { kind, tile });
+    else note('服务端没说这张能杠，没发出去');
+    view.mode = null;
+    view.hint = '';
+  } else {
+    session.send('game.discard', { tile });
+  }
+  draw(session.view);
+});
 
-  $('url').value = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+/* ── 动作键帽：点一下发对应指令；吃/立直要先点牌 ── */
+$('actions').addEventListener('click', (ev) => {
+  const key = ev.target.closest('.key[data-cmd]');
+  if (!key || key.classList.contains('off')) return;
+  const cmd = key.dataset.cmd;
+  if (cmd === 'chi') {
+    view.mode = 'chi'; view.picked = [];
+    view.hint = '吃：点两张手牌';
+  } else if (cmd === 'riichi') {
+    view.mode = 'riichi';
+    view.hint = '立直：点一张当宣言牌（宣言和打牌是同一条指令，协议 §6.7）';
+  } else if (cmd === 'kan' && !session.view.game?.claim) {
+    // 没有鸣牌窗口时的「杠」是自己回合的暗杠/加杠（大明杠走窗口，直接发）
+    view.mode = 'kan';
+    view.hint = '杠：点一张手牌（碰过的就是加杠，否则暗杠）';
+  } else {
+    view.mode = null; view.hint = '';
+    const map = { ron: ['game.win', {}], pon: ['game.pon', {}], kan: ['game.kan', { kind: 'open' }], pass: ['game.pass', {}] };
+    const [type, data] = map[cmd];
+    session.send(type, data);
+  }
+  draw(session.view);
+});
 
-  $('connect').onclick = connect;
-  $('disconnect').onclick = () => conns.filter(isOpen).forEach(h => h.ws.close(1000, '调试页主动断开'));
-  $('send').onclick = () => { const h = active(); if (h) send(h, $('payload').value); else note('没有活着的连接'); };
-  $('bad').onclick = () => { const h = active(); if (h) send(h, '{这不是 JSON'); else note('没有活着的连接'); };
-  $('replace').onclick = connect;
-  $('clear').onclick = () => { logBox.textContent = ''; };
-  $('login').onclick = () => getToken(false);
-  $('register').onclick = () => getToken(true);
-})();
+/* ── 命令行 ── */
+function runCommand(line) {
+  const got = parseCommand(line);
+  if (!got.type) { note(got.note); return; }
+  if (!session.send(got.type, got.data)) note('没有活着的连接，发不出去');
+}
+$('cmd').addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter') return;
+  runCommand(ev.target.value);
+  ev.target.value = '';
+});
+
+/* ── 连接条 ── */
+$('url').value = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+
+$('connect').onclick = () => session.connect($('autoAuth').checked ? $('token').value.trim() : '');
+$('disconnect').onclick = () => {
+  session.close();
+  for (const ws of rawSockets) { try { ws.close(1000, '调试页主动断开'); } catch { /* 已关 */ } }
+  rawSockets = [];
+};
+$('autoPong').onchange = () => { session.autoPong = $('autoPong').checked; };
+$('send').onclick = () => { if (!session.sendRaw($('payload').value)) note('没有活着的连接'); };
+$('bad').onclick = () => { if (!session.sendRaw('{这不是 JSON')) note('没有活着的连接'); };
+$('clear').onclick = () => { for (const box of document.querySelectorAll('.js-log')) box.textContent = ''; };
+
+// 顶号：另开一条**原始**连接（不走 session，否则会把主连接顶掉）
+$('replace').onclick = () => {
+  const ws = new WebSocket($('url').value.trim());
+  rawSockets.push(ws);
+  ws.onopen = () => {
+    const token = $('token').value.trim();
+    if (token) ws.send(JSON.stringify({ type: 'auth', data: { token } }));
+    note('原始连接已开，主连接应收到 4403');
+  };
+  ws.onmessage = (ev) => addLog({ kind: 'down', text: '(原始连接) ' , raw: String(ev.data) });
+  ws.onclose = (ev) => addLog({ kind: 'close', text: `原始连接关闭 code=${ev.code}` });
+  ws.onerror = () => note('原始连接出错');
+};
+
+async function getToken(register) {
+  const path = register ? '/api/register' : '/api/login';
+  const body = JSON.stringify({ username: $('username').value, password: $('password').value });
+  try {
+    const resp = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    const text = await resp.text();
+    if (!resp.ok) { note(`${path} → ${resp.status} ${text.trim()}`); return; }
+    const data = JSON.parse(text);
+    if (data.token) { $('token').value = data.token; note(`${path} → 200，票已填入`); }
+    else note(`${path} → ${resp.status}（注册没返票，再点「登录取票」）`);
+  } catch (err) {
+    note(`${path} 请求失败：${err}`);
+  }
+}
+$('login').onclick = () => getToken(false);
+$('register').onclick = () => getToken(true);
+
+/* ── 登录 / 大厅 ──────────────────────────────────────────────────────────
+   流程：账号密码登录 → 拿票 → 自动连 /ws → 「创建房间」发 room.create（房主）
+   或输房间码「开始游戏」发 room.join → 收到 room.created / room.joined 就切到牌桌。
+   大厅是账号、密码、创建房间、开始游戏、历史牌局。
+   准备与开局还没有按钮（`ready` / `start` 走调试视图的命令行）。
+
+   票存 sessionStorage 而不是 localStorage：同一浏览器开四个标签页跑四个账号时，
+   localStorage 是共享的，四个标签会互相把票覆盖成同一个人，而服务端对同账号的
+   第二条连接以 4403 顶号 —— 演示当天就是三个窗口当场掉线。 */
+const KEY_TOKEN = 'majspirit.token';
+const KEY_USER = 'majspirit.username';
+const store = {
+  get token() { try { return sessionStorage.getItem(KEY_TOKEN) || ''; } catch { return ''; } },
+  get user() { try { return sessionStorage.getItem(KEY_USER) || ''; } catch { return ''; } },
+  save(token, user) {
+    try { sessionStorage.setItem(KEY_TOKEN, token); sessionStorage.setItem(KEY_USER, user); } catch { /* 隐私模式拦不住，只是记不住 */ }
+  },
+  clear() { try { sessionStorage.removeItem(KEY_TOKEN); sessionStorage.removeItem(KEY_USER); } catch { /* 同上 */ } },
+};
+
+function lobbyMsg(text, bad = false) {
+  const el = $('lobby-msg');
+  el.textContent = text || '';
+  el.className = bad ? 'msg bad' : 'msg';
+}
+
+// api 统一处理"非 JSON 的错误响应"：服务端 404 时回的是纯文本，
+// 直接 resp.json() 会抛异常，而那时最该知道的是状态码。
+async function api(path, { method = 'GET', body, token } = {}) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const resp = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const text = await resp.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* 纯文本错误 */ }
+  return { status: resp.status, data, text };
+}
+
+const errText = (r) => (r.data && (r.data.error || r.data.message)) || (r.text || '').trim().slice(0, 120);
+
+// signedIn 切的是两块面板，不是一个按钮的文字：未登录只有账号+密码，
+// 登录后才是大厅 —— 密码不属于大厅，它只活在登录那一步。
+function signedIn() {
+  const on = !!store.token;
+  $('login-box').classList.toggle('hidden', on);
+  $('lobby-box').classList.toggle('hidden', !on);
+  $('lobby-who').textContent = on ? store.user : '';
+}
+
+async function doLogin(register = false) {
+  const username = $('lobby-user').value.trim();
+  const password = $('lobby-pass').value;
+  if (!username || !password) { lobbyMsg('账号和密码都要填', true); return; }
+
+  if (register) {
+    const reg = await api('/api/register', { method: 'POST', body: { username, password } });
+    if (reg.status !== 201) { lobbyMsg(`注册失败：${reg.status} ${errText(reg)}`, true); return; }
+    lobbyMsg('注册成功，正在登录…');
+  }
+  const r = await api('/api/login', { method: 'POST', body: { username, password } });
+  if (r.status !== 200 || !r.data || !r.data.token) {
+    lobbyMsg(`登录失败：${r.status} ${errText(r)}`, true);
+    return;
+  }
+  store.save(r.data.token, username);
+  $('lobby-pass').value = '';
+  signedIn();
+  lobbyMsg('已登录，正在连服务端…');
+  session.connect(r.data.token);
+}
+
+async function doLogout() {
+  const token = store.token;
+  if (token) await api('/api/logout', { method: 'POST', token }).catch(() => {});
+  store.clear();
+  session.close();
+  signedIn();
+  lobbyMsg('已退出登录');
+}
+
+// doCreate 是"创建房间"：一条 room.create，房主进 seat 0。
+//
+// 不在这里做本地乐观状态：切牌桌、报房间号都由服务端回的 room.created 驱动
+// （见上面 onView 那一段）。两处各推一遍状态，迟早会不一致。
+function doCreate() {
+  if (session.state !== 'open') { lobbyMsg('还没连上服务端（登录后会自动连）', true); return; }
+  session.send('room.create', {});
+  lobbyMsg('已发出 room.create，等服务端回 room.created');
+}
+
+// doJoin 是"开始游戏"：按房间码加入（建房见 doCreate）。
+function doJoin() {
+  const code = $('lobby-room').value.trim().toUpperCase();
+  $('lobby-room').value = code;
+  if (!/^[A-Z0-9]{6}$/.test(code)) { lobbyMsg('房间码是 6 位大写字母数字，例如 7KQ2ZP', true); return; }
+  if (session.state !== 'open') { lobbyMsg('还没连上服务端（登录后会自动连）', true); return; }
+  session.send('room.join', { roomId: code });
+  lobbyMsg(`已发出 room.join ${code}，等服务端回 room.joined`);
+}
+
+async function doHistory() {
+  if (!store.token) { lobbyMsg('先登录才能查历史牌局', true); return; }
+  const box = $('lobby-history-list');
+  const r = await api('/api/history', { token: store.token });
+  if (r.status !== 200) {
+    box.textContent = '';
+    // 阶段五才做这个接口。说清"还没做"而不是"查询失败"，否则会让人以为是自己点错了。
+    lobbyMsg(r.status === 404 || r.status === 501
+      ? '服务端还没有 /api/history（阶段五）'
+      : `查询失败：${r.status} ${errText(r)}`, true);
+    return;
+  }
+  // 行里只有数字和服务端给的 id，没有用户输入，所以直接拼字符串不担心转义。
+  const games = (r.data && r.data.games) || [];
+  box.innerHTML = games.map((g) => {
+    const when = g.finishedAt ? new Date(g.finishedAt).toLocaleString('zh-CN', { hour12: false }) : '';
+    const pts = (g.points ?? 0) / 1000;
+    return `<div class="hrow"><span class="rank">${g.placement}位</span><span>#${g.gameId}</span>`
+      + `<span class="hint" style="margin:0">${when}</span>`
+      + `<span class="pts ${pts >= 0 ? 'plus' : 'minus'}">${pts > 0 ? '+' : ''}${pts.toFixed(1)} pt</span></div>`;
+  }).join('');
+  lobbyMsg(games.length ? `共 ${games.length} 局` : '还没有打过牌局');
+}
+
+$('lobby-login').onclick = () => doLogin(false);
+$('lobby-register').onclick = () => doLogin(true);
+$('lobby-logout').onclick = () => doLogout();
+$('lobby-create').onclick = () => doCreate();
+$('lobby-join').onclick = () => doJoin();
+$('lobby-history').onclick = () => doHistory();
+$('lobby-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(false); });
+$('lobby-room').addEventListener('keydown', (e) => { if (e.key === 'Enter') doJoin(); });
+
+/* ── 视图切换 ── */
+const VIEWS = [['lobby', 'view-lobby'], ['table', 'view-table'], ['debug', 'view-debug']];
+function show(which) {
+  for (const [name, id] of VIEWS) {
+    $(id).classList.toggle('hidden', name !== which);
+    $('tab-' + name).classList.toggle('on', name === which);
+  }
+  if (which === 'table') draw(session.view);
+}
+for (const [name] of VIEWS) $('tab-' + name).onclick = () => show(name);
+
+/* ── 开发用：?fx=N 把一份 fixture 灌进 fold，好在服务端 §4 之前就能看见牌桌 ──
+   这不是回放功能（不读文件、不是演示路径），只是一面镜子：验收仍然走四账号真打。
+   1=对局中 2=和了结算 3=荒牌流局。 */
+const MID = [
+  { type: 'room.joined', seq: 1, data: { roomId: '7KQ2ZP', mySeat: 2, seats: [
+    { seat: 0, userId: 1, username: 'aleksey', ready: true, connected: true, isOwner: true },
+    { seat: 1, userId: 2, username: 'kaguya', ready: true, connected: true, isOwner: false },
+    { seat: 2, userId: 42, username: '我', ready: true, connected: true, isOwner: false },
+    { seat: 3, userId: 4, username: 'ryu', ready: true, connected: true, isOwner: false }] } },
+  { type: 'game.started', seq: 2, data: { gameId: 1, roundIndex: 1, roundWind: '1z', handNumber: 0,
+    dealerSeat: 0, mySeat: 2, myHand: '123m456m789m11z0s5s', scores: [24000, 26800, 24200, 25000],
+    riichiSticks: 1, remaining: 42, doraIndicators: ['3s', '7z'] } },
+  { type: 'game.riichi', seq: 3, data: { seat: 0, tile: '9m' } },
+  { type: 'game.discarded', seq: 4, data: { seat: 0, tile: '1p', tsumogiri: false, remaining: 41 } },
+  { type: 'game.discarded', seq: 5, data: { seat: 3, tile: '7z', tsumogiri: false, remaining: 40 } },
+  { type: 'game.meld', seq: 6, data: { seat: 1, kind: 'pon', tiles: '5z5z5z', fromSeat: 3, calledTile: '7z', remaining: 40 } },
+  { type: 'game.doraRevealed', seq: 7, data: { indicator: '1m', isUra: false, kanCount: 1 } },
+  { type: 'game.drew', seq: 8, data: { seat: 2, tile: '6s', remaining: 39 } },
+  { type: 'game.turn', seq: 9, data: { seat: 2, deadlineMs: Date.now() + 3200 } },
+];
+
+const WIN = { type: 'game.winDeclared', seq: 10, data: {
+  seat: 2, isTsumo: false, winningTile: '6s', fromSeat: 0,
+  hand: '123m456m789m11z0s5s6s', melds: [] } };
+
+const RESULT_WIN = { type: 'game.roundEnd', seq: 11, data: {
+  roundIndex: 1, endedBy: 'win',
+  wins: [{ winnerSeat: 2, loserSeat: 0, isTsumo: false, winningTile: '6s',
+    han: 4, fu: 30, yakuman: 0,
+    yaku: [{ name: '立直', han: 1 }, { name: '平和', han: 1 }, { name: '断幺九', han: 1 }, { name: '赤ドラ', han: 1 }],
+    dora: { dora: 1, ura: 1, aka: 1 }, paoSeat: null, paoYaku: null,
+    payments: { 0: -7700, 1: 0, 2: 8700, 3: 0 } }],
+  hand: '123m456m789m11z0s5s6s', deltas: [-7700, 0, 8700, 0],
+  newScores: [16300, 26800, 32900, 25000], riichiSticks: 1, dealerRepeats: false,
+  uraIndicators: ['7m'] } };
+
+const RESULT_DRAW = { type: 'game.roundEnd', seq: 11, data: {
+  roundIndex: 1, endedBy: 'draw', wins: [],
+  tenpaiSeats: [0, 2], notenSeats: [1, 3],
+  tenpaiHands: [
+    { seat: 0, hand: '123m456m789m11z', waiting: ['3s', '6s'] },
+    { seat: 2, hand: '19m19p19s1234z', waiting: ['1p'] }],
+  deltas: [1500, -1500, 1500, -1500],
+  newScores: [25500, 25300, 25700, 23500] } };
+
+const FIXTURES = {
+  1: MID,
+  2: [...MID, WIN, RESULT_WIN],
+  3: [...MID, RESULT_DRAW],
+  // 4 = 房间被解散（有人掉线保座超时）：房间与对局一起清掉，中央面板留一句解释
+  4: [...MID, { type: 'room.closed', seq: 10, data: { roomId: '7KQ2ZP', reason: 'playerTimeout' } }],
+  // 5 = 服务端**下发了合法性**（⑨）：轮到自家但只允许打牌和立直 → 杠必须灰着。
+  // 用来证明"服务端说能做什么"赢过前端"轮到我全点亮"。
+  5: [...MID, { type: 'game.turn', seq: 10, data: {
+    seat: 2, deadlineMs: Date.now() + 3200, actions: ['discard', 'riichi'], kanClosed: [], kanAdded: [] } }],
+};
+
+const fx = new URLSearchParams(location.search).get('fx');
+if (FIXTURES[fx]) {
+  for (const env of FIXTURES[fx]) applyEvent(session.view, env);
+  session.view.user = { userId: 42, username: '我' };
+  note(`?fx=${fx}：这只是灌进来的假事件，用来在服务端 §4 之前看牌桌，不是真实对局`);
+}
+
+/* ── 初始化 ──
+   有票（sessionStorage 里的，也就是这个标签页自己的）就直接连；认证过期会走 4401
+   把票清掉并退回大厅。没票就停在大厅等登录。 */
+signedIn();
+draw(session.view);
+if (FIXTURES[fx]) {
+  show('table');
+} else {
+  lobbyMsg(store.token ? `正在用上次的登录（${store.user}）连服务端…` : '填账号密码登录；没有房间码就「创建房间」，有码就按码加入');
+  if (store.token) session.connect(store.token);
+  show('lobby');
+}
 </script>
 </body>
 </html>

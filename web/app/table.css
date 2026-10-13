@@ -1,0 +1,151 @@
+/* 牌桌页的样式。全部挂在 .view-table 下面：调试页有自己的内联样式
+   （它也用了 .t / .type / .entry 这类短名字），不隔离迟早互相盖。 */
+
+/* !important 不是洁癖：调试视图的样式写在 index.html 的内联 <style> 里，
+   那里是 `main#view-debug`（id 选择器），特异性高过 `.view.hidden` ——
+   不加它两个视图会同时显示，而且不会有任何报错。 */
+.view.hidden { display: none !important; }
+
+.view-table { display: block; }
+/* 侧栏吃掉方桌用不掉的余量。
+   方桌按 min(宽,高) 缩放，宽屏上左右本来就会空出来 —— 固定 280px 的侧栏纯浪费：
+   命令行被截断、长事件被省略号吃掉，而桌边两大块黑。clamp 让侧栏按窗口给宽。 */
+.view-table .layoutA { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 30%, 560px);
+  gap: 6px; align-items: stretch; }
+.view-table .col-side { display: flex; flex-direction: column; min-height: 0; }
+
+/* 窄窗口：上下摞起来，桌子拿到整幅宽度（不然桌子被侧栏挤成一小块） */
+@media (max-width: 900px) {
+  .view-table .layoutA { grid-template-columns: minmax(0, 1fr); }
+  .view-table .col-side { max-height: 200px; }
+}
+
+/* ── 牌面：无白底 + 双实线框 + 1px 无光晕白描边 ──
+   描边用四个 0 模糊的 drop-shadow（不是模糊 glow）：SVG 的字形是深色描在透明上，
+   白底一去就基本读不出来；加一圈硬白边既保住花色又能认。 */
+.view-table .tb { display: inline-block; box-sizing: border-box; width: 54px; height: 72px; border: 3px double #8a8a8a; border-radius: 0; position: relative; background: transparent; }
+.view-table .tb img { display: block; width: 100%; height: 100%; filter: drop-shadow(1px 0 0 #fff) drop-shadow(-1px 0 0 #fff) drop-shadow(0 1px 0 #fff) drop-shadow(0 -1px 0 #fff); }
+.view-table .tb.red { border-color: #e06c75; }
+.view-table .tb.back { background: #2b2b2b; border-color: #555; }
+.view-table .tb.back img { filter: none; }
+
+/* ── 牌桌本体：1040×1040 逻辑棋盘，整块缩放 ── */
+.view-table .zone { position: relative; overflow: hidden; background: #0b0b0b; }
+.view-table .board { position: absolute; left: 0; top: 0; width: 1040px; height: 1040px; transform-origin: 0 0; }
+.view-table .tbl { position: absolute; left: 6px; top: 6px; right: 6px; bottom: 6px; border: 1px solid #2e2e2e; }
+.view-table .tbl-in { position: absolute; left: 16px; top: 16px; right: 16px; bottom: 16px; border: 1px dashed #232323; }
+.view-table .cross { position: absolute; left: 520px; top: 190px; width: 1px; height: 660px; background: #232323; }
+.view-table .cross.h { left: 190px; top: 520px; width: 660px; height: 1px; }
+
+.view-table .seat { position: absolute; left: 520px; top: 520px; width: 0; height: 0; transform-origin: 0 0; }
+.view-table .cell { position: absolute; }
+.view-table .cell .tb { position: absolute; left: 0; top: 0; }
+.view-table .cell .tb.fill { width: 100%; height: 100%; }
+/* 横放：占位盒是旋转后的尺寸（高×宽），里面牌盒保持自然尺寸再转 90° 铺满 */
+.view-table .cell.yoko .tb { transform: rotate(90deg) translateY(-100%); transform-origin: 0 0; }
+
+/* ── 中央面板 ──
+   半宽 115 必须 < 牌河起始距离 120，否则侧家的牌河会钻进面板边缘（实测 4 张牌压上去）。 */
+.view-table .center { position: absolute; left: 520px; top: 520px; width: 230px; height: 210px; margin: -105px 0 0 -115px; border: 1px solid #3a3a3a; background: #0d0d0d; text-align: center; padding-top: 10px; }
+.view-table .center .l1 { font-size: 18px; color: #fff; letter-spacing: .08em; }
+.view-table .center .l2 { font-size: 14px; color: #7a7a7a; margin-top: 2px; }
+.view-table .center .l3 { font-size: 14px; color: #e0c46c; margin-top: 8px; }
+.view-table .center .dora { display: flex; gap: 8px; justify-content: center; margin-top: 5px; }
+/* 指示牌最多 5 张（初始 1 + 全场开杠上限 4）：5×48+4×8 > 面板内宽，
+   所以靠 aspect-ratio + flex-shrink 自己缩，1 张时 48×65、5 张时约 40×53。 */
+.view-table .center .dora .tb { width: 48px; height: auto; aspect-ratio: 3 / 4; flex: 0 1 auto; min-width: 0; border-width: 2px; }
+.view-table .center .dora.ura .tb { border-color: #b48ead; }
+.view-table .center .sticks { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; gap: 16px; justify-content: center; font-size: 13.5px; }
+/* 房间被解散：中央面板换成一句解释，用红色，不然"我为什么回大厅了"没人回答 */
+.view-table .center.closed { border-color: #6a4444; }
+.view-table .center.closed .l1 { color: #e06c75; }
+.view-table .kyo { color: #e06c75; }
+.view-table .hon { color: #6cd0e0; }
+
+/* ── 座位牌：HUD 层，不随座位旋转（侧家的名字和分数是正着的） ── */
+.view-table .hud { position: absolute; inset: 0; pointer-events: none; }
+.view-table .badge { position: absolute; border: 1px solid #454545; background: rgba(8, 8, 8, .94); color: #7a7a7a; }
+.view-table .badge.me { width: 200px; height: 54px; padding: 5px 9px; font-size: 13px; }
+.view-table .badge.other { width: 160px; height: 43px; padding: 3px 7px; font-size: 11px; }
+.view-table .badge.active { border-color: #7bd88f; background: #12251a; }
+.view-table .badge .n { color: #e6e6e6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-table .badge.me .n { font-size: 13px; }
+.view-table .badge.active .n { color: #7bd88f; }
+.view-table .badge.me .s { font-size: 19px; color: #fff; margin-top: 1px; }
+.view-table .badge.other .s { font-size: 15px; color: #fff; }
+/* 结算期间分数旁边挂上加减：面板可能被挡住，四家的进出要随时看得见 */
+.view-table .badge .s .sd { margin-left: 6px; font-size: 15px; font-weight: 700; }
+.view-table .badge .s .sd.plus { color: #7bd88f; }
+.view-table .badge .s .sd.minus { color: #e06c75; }
+.view-table .badge .r { position: absolute; right: 8px; top: 4px; color: #e0c46c; }
+.view-table .timer { position: absolute; left: 520px; width: 300px; margin-left: -150px; text-align: center; font-size: 15px; color: #e0c46c; letter-spacing: .06em; }
+
+/* ── 动作键帽：亮的 = 服务端给的 options，灰的 = 当前不成立 ── */
+.view-table .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #151515; border: 1px solid #2e2e2e; padding: 10px 12px; }
+.view-table .key { border: 1px solid #454545; background: #121212; padding: 11px 26px; cursor: pointer; color: #cfcfcf; font: 600 17px Consolas, "Cascadia Mono", ui-monospace, monospace; }
+.view-table .key:hover { background: #cfcfcf; color: #0f0f0f; }
+.view-table .key.armed { background: #cfcfcf; color: #0f0f0f; }
+.view-table .k-ron { color: #e06c75; }
+.view-table .k-pon { color: #e0a05c; }
+.view-table .k-chi { color: #7bd88f; }
+.view-table .k-kan { color: #b48ead; }
+.view-table .k-riichi { color: #e0c46c; }
+/* 跳过/摸切没有语义色，但**不能是灰的** —— 灰等于"禁用"，而它常常是唯一能按的键
+   （自家手番时的摸切）。区分交给边框：.off 的边框是 #2c2c2c 且字更暗。 */
+.view-table .k-pass { color: #cfcfcf; }
+.view-table .key.off { border-color: #2c2c2c; background: #0f0f0f; color: #4a4a4a; cursor: default; }
+.view-table .key.off:hover { background: #0f0f0f; color: #4a4a4a; }
+.view-table .cap { color: #7a7a7a; font-size: 13px; margin-left: auto; }
+/* 自家手牌：点一张就打出去 */
+.view-table .cell[data-tile] { cursor: pointer; }
+
+/* ── 结算面板：**不随棋盘缩放**的浮层 ──
+   画在棋盘里就会跟着缩（1080p 上 0.85 倍、字剩 12px），而结算正是要看清的那一屏。
+   所以它按窗口实际像素排版：宽到 min(94%, 1000px)，字比牌桌大一档。
+   牌桌仍然露在四周 —— 讲的时候要一边指牌河一边报菜名。 */
+.view-table .zone-wrap { position: relative; }
+.view-table .result-layer { position: absolute; inset: 0; display: none; z-index: 6;
+  align-items: center; justify-content: center; pointer-events: none; }
+.view-table .result-layer.show { display: flex; }
+.view-table .result { width: min(94%, 1000px); max-height: 94%; overflow: auto;
+  padding: 18px 22px; border: 1px solid #6a6a6a; background: #080808; font-size: 16px;
+  pointer-events: auto; }
+.view-table .result .head { font-size: 22px; color: #fff; margin-bottom: 8px; }
+.view-table .result .tag { background: #e0c46c; color: #111; padding: 1px 8px; margin-right: 8px; font-weight: 700; }
+.view-table .result .line { margin-top: 7px; color: #d4d4d4; }
+/* 里宝牌那行用 flex：行内 flex + 牌盒会让整行折行（实测：牌掉到下一行） */
+.view-table .result .line.ura { display: flex; align-items: center; gap: 10px; }
+.view-table .result .dim { color: #7a7a7a; }
+.view-table .result .hand { display: flex; gap: 4px; align-items: flex-end; flex-wrap: wrap; margin: 10px 0; }
+.view-table .result .tb { width: 46px; height: 61px; border-width: 2px; flex: 0 0 auto; }
+.view-table .result .tb.win { border-color: #e0c46c; }
+/* 副露和暗牌之间空一格：结算面板上要能看出哪几组是摆出来的 */
+.view-table .result .meldgrp { display: inline-flex; gap: 4px; margin-left: 18px; }
+.view-table .result .dora-inline { display: inline-flex; gap: 4px; align-items: center; }
+.view-table .result .dora-inline .tb { width: 30px; height: 40px; }
+.view-table .result .winname { color: #e0c46c; font-size: 15px; margin-left: 8px; align-self: center; }
+.view-table .result .yaku { color: #e0c46c; font-size: 20px; }
+.view-table .result .pts { float: right; color: #fff; font-weight: 700; font-size: 22px; }
+.view-table .result .pao { color: #e06c75; margin-top: 6px; }
+/* 分数变化：四格大号数字。结算时最该一眼看到的就是"谁加减了多少"——
+   挤成一行小字等于没画（v1 就是这么干的，被退回来了）。和牌者那格描金边。 */
+.view-table .result .deltas { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid #2e2e2e; }
+.view-table .result .deltas .d { border: 1px solid #333; padding: 10px 6px; text-align: center; }
+.view-table .result .deltas .d.win { border-color: #e0c46c; background: #1a1710; }
+.view-table .result .deltas .d i { display: block; font-style: normal; font-size: 14px; color: #8a8a8a;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.view-table .result .deltas .d b { display: block; font-size: 34px; line-height: 1.15; font-weight: 700; }
+.view-table .result .plus { color: #7bd88f; }
+.view-table .result .minus { color: #e06c75; }
+.view-table .result .zero { color: #5a5a5a; }
+.view-table .result .rank { color: #e0c46c; font-weight: 700; margin-right: 8px; font-size: 18px; }
+
+/* ── 侧栏：事件流 + 命令行（和调试视图共用一份日志，所以用 .js-log 标） ── */
+.view-table .log { background: #0f0f0f; border: 1px solid #2e2e2e; padding: 4px 7px; font-size: 13px; overflow: auto; flex: 1; min-height: 0; }
+.view-table .log div { white-space: nowrap; }
+.view-table .seq { color: #4a4a4a; }
+.view-table .ev { color: #6cd0e0; }
+.view-table .prompt { background: #0f0f0f; border: 1px solid #2e2e2e; border-top: none; padding: 5px 7px; font-size: 13px; white-space: nowrap; overflow: hidden; }
+.view-table .ps1 { color: #7bd88f; }
+.view-table .caret { background: #cfcfcf; color: #0f0f0f; }
