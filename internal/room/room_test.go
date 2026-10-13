@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aleksey-45/majspirit/internal/game"
 	"github.com/aleksey-45/majspirit/internal/protocol"
 )
 
@@ -330,6 +331,16 @@ func TestReconnectWithinHoldKeepsSeat(t *testing.T) {
 		t.Fatalf("重连后座位 1 应当是 connected=true, 实际 %v", s)
 	}
 
+	// 回来的人必须重新拿到 roomId 与自己的座位：刷新过的页面手上什么都没有，
+	// 而 room.joined 是客户端重建房间视图的唯一来源（协议 §4.5）。
+	m, ok := n.find(2, protocol.EventRoomJoined)
+	if !ok {
+		t.Fatal("重连没有补发 room.joined —— 刷新过的页面画不出座位")
+	}
+	if m["roomId"] != r.ID() || m["mySeat"] != float64(1) {
+		t.Errorf("room.joined = %v, 期望 roomId %s / mySeat 1", m, r.ID())
+	}
+
 	// 重连之后那个保座定时器必须不再开火 —— 否则过一会儿座位会被凭空放掉。
 	time.Sleep(3 * fastHold)
 	if s := latestSeat(t, n, 1, 1); s == nil {
@@ -340,32 +351,147 @@ func TestReconnectWithinHoldKeepsSeat(t *testing.T) {
 	}
 }
 
-// seq 是房间级的一条流：同一条事件四个人拿到同一个号。
-// 各发各的号，客户端靠"序号有洞"检测丢消息的能力就没了（协议 §1.4）。
-func TestSeqIsSharedAcrossSeats(t *testing.T) {
-	_, r, n := newTestRoom(t, fastHold)
+// 对局中离开算认输（协议 §5.2），后果与掉线超时一样：**整个房间关掉**。
+//
+// 不这么做的话，座位被清掉而那个对局照旧打到底 —— 它的座位表是开局时拷的一份，
+// 会一直推着三个人的牌局，直到自己算出个结果，而四个人已经回不去那个房间了。
+func TestMidGameLeaveCountsAsSurrender(t *testing.T) {
+	h, r, n := newTestRoom(t, fastHold)
+	fillAndReady(t, r)
+	if err := r.Start(1); err != nil {
+		t.Fatalf("开局: %v", err)
+	}
+	g := r.Game()
+	if g == nil {
+		t.Fatal("开局之后房间手上没有对局")
+	}
+
+	if err := r.Leave(3); err != nil {
+		t.Fatalf("中局离开: %v", err)
+	}
+
+	// 先说他走了，再说房间没了（和保座超时同一个顺序，理由也一样）。
+	if m, ok := n.find(1, protocol.EventRoomLeft); !ok || m["seat"] != float64(2) {
+		t.Errorf("没广播 room.left: %v", m)
+	}
+	m, ok := n.find(1, protocol.EventRoomClosed)
+	if !ok {
+		t.Fatal("中局离开没有关房")
+	}
+	if m["reason"] != reasonPlayerLeft {
+		t.Errorf("room.closed.reason = %v, 期望 %s", m["reason"], reasonPlayerLeft)
+	}
+	if _, ok := h.Lookup(r.ID()); ok {
+		t.Error("关了房还挂在 Hub 上")
+	}
+
+	// 对局必须跟着走：它有自己的秒表，留下来就一直往外推牌局。
+	waitGameGone(t, r, g)
+}
+
+// 房间被关掉（保座超时、认输、进程退出）时，手上那一场对局也要停。
+func TestRoomCloseStopsRunningGame(t *testing.T) {
+	_, r, _ := newTestRoom(t, fastHold)
+	fillAndReady(t, r)
+	if err := r.Start(1); err != nil {
+		t.Fatalf("开局: %v", err)
+	}
+	g := r.Game()
+	if g == nil {
+		t.Fatal("开局之后房间手上没有对局")
+	}
+
+	r.Close()
+	waitGameGone(t, r, g)
+}
+
+// waitGameGone 等房间把对局收走：房间手上不再有它，而且它不再受理指令。
+//
+// 只断"指针是 nil"不够 —— stopGame 是先摘指针再 Close 的，指针没了只说明房间动过手。
+func waitGameGone(t *testing.T, r *Room, g *game.Game) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		err := g.Sync(1)
+		if errors.Is(err, game.ErrClosed) && r.Game() == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("房间已经没了，对局 actor 还在跑（Sync = %v, Game = %v）", err, r.Game() != nil)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// Hub 要能按人找到房间：网关靠它投对局指令、判断重连、拦住"同时进两个房间"。
+//
+// 关键是它跟着座位表走 —— **离开之后必须查不到**，否则指令会被投进一个他已经
+// 离开的房间，而那不报错。
+func TestHubFindsRoomByUser(t *testing.T) {
+	n := newFakeNotifier()
+	h := NewHub(n.Send, nil)
+	defer h.Close()
+
+	r, err := h.Create(testUser(1, "甲"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := h.ByUser(1); !ok || got != r {
+		t.Error("房主按人查不到自己的房间")
+	}
+	if _, ok := h.ByUser(2); ok {
+		t.Error("不在任何房间里的人被查到了")
+	}
+
 	if err := r.Join(testUser(2, "乙")); err != nil {
 		t.Fatal(err)
 	}
-
-	// 找一条四个人都该收到的同类型事件，比较它的 seq。
-	seatsA := eventsOf(t, n, 1, protocol.EventRoomSeats)
-	seatsB := eventsOf(t, n, 2, protocol.EventRoomSeats)
-	if len(seatsA) == 0 || len(seatsB) == 0 {
-		t.Fatal("两边都没收到 room.seats")
-	}
-	lastA, lastB := seatsA[len(seatsA)-1], seatsB[len(seatsB)-1]
-	if lastA.Seq != lastB.Seq {
-		t.Errorf("同一条事件的两个收件人拿到不同 seq：%d vs %d", lastA.Seq, lastB.Seq)
+	if got, ok := h.ByUser(2); !ok || got != r {
+		t.Error("加入之后按人查不到房间")
 	}
 
-	// 每个收件人自己的 seq 也必须严格递增。
-	last := 0
-	for _, e := range n.all(1) {
-		if e.Seq <= last {
-			t.Fatalf("seq 没有递增：%d 之后出现 %d", last, e.Seq)
+	if err := r.Leave(2); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.ByUser(2); ok {
+		t.Error("离开之后还能按人查到房间")
+	}
+
+	// Hub 关掉之后也要立刻给答案，不能挂在那里等一个不会来的回复。
+	h.Close()
+	if _, ok := h.ByUser(1); ok {
+		t.Error("Hub 关了还查得到房间")
+	}
+}
+
+// seq 是**每个收件人自己**的一条流：他收到的每一条事件都比上一条恰好大 1。
+//
+// 这条判据就是协议 §1.4 说"有洞就是丢消息"的全部依据，所以它必须按收件人成立。
+// 按事件发号（一条只发给某个人的事件，比如 room.joined，也吃掉一个公共号）
+// 会让别人看到一个假洞 —— 客户端照着 §4.4 去拉快照，而其实什么都没丢。
+func TestSeqIsContiguousPerRecipient(t *testing.T) {
+	_, r, n := newTestRoom(t, fastHold)
+	for i := int64(2); i <= 4; i++ {
+		if err := r.Join(testUser(i, "玩家")); err != nil {
+			t.Fatal(err)
 		}
-		last = e.Seq
+	}
+	// 造几条只发给一个人的事件（room.joined、room.left）。
+	if err := r.Leave(3); err != nil {
+		t.Fatal(err)
+	}
+
+	for id := int64(1); id <= 4; id++ {
+		last := 0
+		for _, e := range n.all(id) {
+			if e.Seq != last+1 {
+				t.Fatalf("用户 %d 的流有洞：seq %d 之后是 %d（%s）", id, last, e.Seq, e.Type)
+			}
+			last = e.Seq
+		}
+		if last == 0 {
+			t.Fatalf("用户 %d 一条事件都没收到", id)
+		}
 	}
 }
 
@@ -386,7 +512,7 @@ func (f *failingNotifier) Send(int64, protocol.Envelope) error {
 // 裁决。这条要是破了，一个掉线的客户端就能让别人的加入操作失败。
 func TestNotifyFailureDoesNotBreakRoom(t *testing.T) {
 	n := &failingNotifier{}
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 	defer h.Close()
 	r := newRoom("TEST02", testUser(1, "甲"), h,
 		tuning{hold: fastHold, turnLimit: time.Second, turnBase: time.Second})
@@ -432,7 +558,7 @@ func TestOperationsRejectNonMembers(t *testing.T) {
 // 而不是挂在那里等一个永远不会来的回复。
 func TestClosedHubAnswersImmediately(t *testing.T) {
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 	r, err := h.Create(testUser(1, "甲"))
 	if err != nil {
 		t.Fatal(err)
@@ -454,13 +580,42 @@ func TestClosedHubAnswersImmediately(t *testing.T) {
 	}
 }
 
-func eventsOf(t *testing.T, n *fakeNotifier, userID int64, typ protocol.Command) []protocol.Envelope {
-	t.Helper()
-	var out []protocol.Envelope
-	for _, e := range n.all(userID) {
-		if e.Type == typ {
-			out = append(out, e)
+// 房间与对局共用一条流：大厅最后一个号与对局第一个号之间不能断。
+//
+// 对局自己发号（各造一个 Emitter）的话，game.started 会从 1 重新开始，而客户端
+// 大厅那段基线已经涨到 7 —— 开局那一刻就是一个假洞，它照协议 §4.4 去拉快照。
+func TestGameEventsContinueTheRoomStream(t *testing.T) {
+	_, r, n := newTestRoom(t, fastHold)
+	fillAndReady(t, r)
+	if err := r.Start(1); err != nil {
+		t.Fatalf("开局: %v", err)
+	}
+
+	if n.count(1, protocol.EventGameStarted) == 0 {
+		t.Fatal("没有收到 game.started —— 这条用例什么都没测到")
+	}
+	for id := int64(1); id <= 4; id++ {
+		last := 0
+		for _, e := range n.all(id) {
+			if e.Seq != last+1 {
+				t.Fatalf("用户 %d 在开局处断了：seq %d 之后是 %d（%s）", id, last, e.Seq, e.Type)
+			}
+			last = e.Seq
 		}
 	}
-	return out
+}
+
+// fillAndReady 把 2~4 号坐进来并让四个人全部准备。
+func fillAndReady(t *testing.T, r *Room) {
+	t.Helper()
+	for i := int64(2); i <= 4; i++ {
+		if err := r.Join(testUser(i, "玩家")); err != nil {
+			t.Fatalf("加入: %v", err)
+		}
+	}
+	for i := int64(1); i <= 4; i++ {
+		if err := r.SetReady(i, true); err != nil {
+			t.Fatalf("准备: %v", err)
+		}
+	}
 }

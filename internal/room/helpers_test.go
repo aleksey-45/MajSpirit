@@ -115,7 +115,7 @@ func newTestRoom(t *testing.T, hold time.Duration) (*Hub, *Room, *fakeNotifier) 
 func newTestRoomWith(t *testing.T, tune tuning) (*Hub, *Room, *fakeNotifier) {
 	t.Helper()
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 	t.Cleanup(h.Close)
 
 	r := newRoom("TEST01", testUser(1, "甲"), h, tune)

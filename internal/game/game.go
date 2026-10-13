@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aleksey-45/majspirit/internal/mahjong"
+	"github.com/aleksey-45/majspirit/internal/protocol"
 )
 
 const (
@@ -57,9 +58,12 @@ type Options struct {
 // 这里只要"座位 → 用户"）。
 type Game struct {
 	players [4]Player
-	notify  Notifier
 	log     *slog.Logger
 	opt     Options
+
+	// stream 是**房间**的事件流（开局时传进来，不是对局自己造的）：
+	// 大厅事件与对局事件共用一条 seq，客户端才不用分辨自己在看哪条流。
+	stream *protocol.Emitter
 
 	commands chan command
 	closing  chan struct{}
@@ -103,7 +107,11 @@ type Game struct {
 }
 
 // New 开一场并起它的 goroutine。
-func New(players [4]Player, notify Notifier, opt Options, log *slog.Logger) *Game {
+//
+// stream 是**房间的**事件流，不是新造一个：同一房间的大厅事件与对局事件要排在
+// 一条 seq 上（见 protocol.Emitter）。传 nil 会让事件全部丢失 —— 那是有意的，
+// 没有房间就没有事件流，不要在这里再兜一个。
+func New(players [4]Player, stream *protocol.Emitter, opt Options, log *slog.Logger) *Game {
 	if opt.Rounds == 0 {
 		opt.Rounds = defaultRoundsPerGame
 	}
@@ -122,7 +130,7 @@ func New(players [4]Player, notify Notifier, opt Options, log *slog.Logger) *Gam
 
 	g := &Game{
 		players:  players,
-		notify:   notify,
+		stream:   stream,
 		log:      log.With("game", opt.GameID),
 		opt:      opt,
 		commands: make(chan command),

@@ -109,4 +109,11 @@ func (g *Game) endGame() {
 	if g.opt.OnEnd != nil {
 		g.opt.OnEnd()
 	}
+
+	// 没有下一局了，这个 actor 的使命到此为止，自己退出。
+	//
+	// 不自退的话每打一场就漏一个 goroutine，而且它会一直活着：房间那边打完就把
+	// 指针摘了，谁也不会再来 Close 它。OnEnd 必须先调 —— 房间要收到"打完了"，
+	// 而 Close 一调，投进来的指令就只剩 ErrClosed 了。
+	g.shutdown()
 }

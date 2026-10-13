@@ -2,6 +2,7 @@ package game
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -106,7 +107,7 @@ func newTestGame(t *testing.T, opt Options) (*Game, *fakeNotifier) {
 	if opt.ClaimLimit == 0 {
 		opt.ClaimLimit = time.Second
 	}
-	g := New(players(), n, opt, nil)
+	g := New(players(), protocol.NewEmitter(n.Send), opt, nil)
 	t.Cleanup(g.Close)
 	return g, n
 }
@@ -347,6 +348,17 @@ func TestTsumoWinAndPlacements(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("整场结束后没有回调通知房间")
 	}
+
+	// 整场打完，actor 自己退出：不然每打一场漏一个 goroutine，而房间那边打完就把
+	// 指针摘了，谁也不会再来关它。对局停止受理指令是它停下来的外部证据。
+	select {
+	case <-g.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("整场结束后对局 actor 没有退出")
+	}
+	if err := g.Sync(userOf(0)); !errors.Is(err, ErrClosed) {
+		t.Errorf("整场结束后还能投指令: %v", err)
+	}
 }
 
 // 荣和：别人打出的牌成全了自己 —— 窗口、裁决、结算一条线走完。
@@ -431,8 +443,68 @@ func TestRonClaimWindow(t *testing.T) {
 	}
 }
 
-// 吃碰：优先级是**荣和 > 碰 > 吃**，同级才看远近。碰的人比吃的人远，照样是碰赢。
-//
+// 大明杠走**弃牌窗口**（协议 §6.6）：它不是自己的回合动作，而是对别人打出那张牌的
+// 回应 —— 手里三张 + 那张弃牌。窗口的选项列表里一直有 "kan"，但在这之前没人能回答它
+// （doKan 对 open 一律 ErrNoClaim），所以这条路径从网络上是够不着的。
+func TestOpenKanFromDiscardWindow(t *testing.T) {
+	five := mahjong.MustParseTiles("5m")[0]
+	hands := [4][]mahjong.Tile{
+		mahjong.MustParseTiles("111222333444z5z"),    // 庄家摸 5m，摸切
+		mahjong.MustParseTiles("555m111s222s333s1p"), // 下家手里三张，能大明杠
+		mahjong.MustParseTiles("666677778888m9p"),
+		mahjong.MustParseTiles("123456789s111p2p"),
+	}
+	g, n := newTestGame(t, Options{Rounds: 1, Wall: rigWall(t, hands, five)})
+
+	if err := g.Discard(userOf(0), five); err != nil {
+		t.Fatalf("打牌失败: %v", err)
+	}
+
+	win, ok := n.find(userOf(1), protocol.EventGameClaimWindow)
+	if !ok {
+		t.Fatal("下家没收到窗口")
+	}
+	if opts := win["options"].([]any); !slices.Contains(opts, "kan") {
+		t.Fatalf("下家的 options = %v, 期望有 kan", win["options"])
+	}
+
+	if err := g.Kan(userOf(1), "open", mahjong.Tile(0)); err != nil {
+		t.Fatalf("大明杠被拒: %v", err)
+	}
+
+	meld, ok := n.find(userOf(0), protocol.EventGameMeld)
+	if !ok {
+		t.Fatal("没有 game.meld")
+	}
+	if meld["seat"] != float64(1) || meld["kind"] != "kan" {
+		t.Errorf("meld = %v, 期望座位 1 的 kan", meld)
+	}
+	if meld["fromSeat"] != float64(0) || meld["taken"] != "5m" {
+		t.Errorf("meld 的来处 = %v / %v, 期望座位 0 打出的 5m", meld["fromSeat"], meld["taken"])
+	}
+	if tiles := meld["tiles"].([]any); len(tiles) != 4 {
+		t.Errorf("杠出来应当是 4 张，实际 %v", meld["tiles"])
+	}
+
+	// 杠完摸岭上牌、翻新宝牌 —— 这两件事与明杠/暗杠无关，是"杠"本身的后果。
+	drew, ok := n.find(userOf(1), protocol.EventGameDrew)
+	if !ok {
+		t.Fatal("杠完没有摸牌事件")
+	}
+	if drew["rinshan"] != true {
+		t.Errorf("杠后摸的不是岭上牌: %v", drew)
+	}
+	if n.count(userOf(0), protocol.EventGameDoraRevealed) == 0 {
+		t.Error("杠完没有翻新宝牌")
+	}
+
+	// 裁决结果要说清是谁用杠把这张牌接走的。
+	closed, _ := n.find(userOf(0), protocol.EventGameClaimClosed)
+	if closed["resolvedBy"] != "kan" || closed["seat"] != float64(1) {
+		t.Errorf("claimClosed = %v, 期望 kan / 座位 1", closed)
+	}
+}
+
 // 顺带验"鸣完由谁打"：鸣牌者不摸牌就得打一张，而且**不能宣告自摸**（没摸牌）——
 // 这就是 `drawn` 和 `awaitingDiscard` 不能合成一个字段的原因。
 func TestPonBeatsChiAndMelderDiscards(t *testing.T) {

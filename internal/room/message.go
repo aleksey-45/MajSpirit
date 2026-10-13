@@ -49,9 +49,16 @@ type roomSeatVacated struct {
 //
 // 必须有一条明确的收尾事件。不发的话，剩下的人只会发现"发什么指令都不对劲"，
 // 而不知道房间已经不存在了 —— 那比房间解散本身更糟。
-//
-// reason 目前只有 "playerTimeout"（有人掉线、保座超时）。
 type roomClosed struct {
 	RoomID string `json:"roomId"`
 	Reason string `json:"reason"`
 }
+
+// 关房理由（协议 §6.2）。两条都指向同一件事：四个人凑不齐了，这局散了。
+// 放在这里而不是各自产生它的文件里 —— 客户端按 reason 分支，它需要一份完整的表。
+const (
+	// reasonPlayerTimeout 有人掉线且没回来（协议 §4.5 的 120 秒保座窗口）。
+	reasonPlayerTimeout = "playerTimeout"
+	// reasonPlayerLeft 对局中有人离开（协议 §5.2：对局中视为认输/退出）。
+	reasonPlayerLeft = "playerLeft"
+)

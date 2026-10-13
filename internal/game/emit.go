@@ -1,6 +1,6 @@
 package game
 
-// emit.go —— 往外发事件的管道：Notifier 接口、事实、按座位投影。
+// emit.go —— 事件体怎么变成发给某个座位的信封：事实、按座位投影。
 
 import (
 	"encoding/json"
@@ -8,17 +8,9 @@ import (
 	"github.com/aleksey-45/majspirit/internal/protocol"
 )
 
-// Notifier 是 Game 往外发事件的能力。
+// Notifier 与"发号"都不在这里：投递用的是 protocol.Emitter，而且必须是**房间那个**
+// （开局时传进来）—— 见 emit_seq.go。这里只负责"谁该看到什么"。
 //
-// 定义在这里（消费方）而不是 internal/ws：接口属于使用它的包。换来的是对局逻辑能
-// **脱离网络测试** —— 四个假玩家跑完一整场，不碰端口。
-//
-// 消息类型直接用协议信封，不另造一个 Message：多一层映射只会多一个漂移点
-// （seq 谁分配、data 怎么编码，两处各写一遍必然不一致）。
-type Notifier interface {
-	Send(userID int64, msg protocol.Envelope) error
-}
-
 // fact 是一条已经发生的**事实**：牌桌上刚刚发生了这件事。
 //
 // 可见性由这两个字段二选一：
@@ -26,7 +18,7 @@ type Notifier interface {
 //	data    所有人看到的是同一份字节（牌河、分数、和牌信息）。
 //	forSeat 按座位现构造：`myHand`、别人摸到的牌、鸣牌候选都只给该看到的人。
 //
-// 隐藏信息**只能**从 forSeat 里产生。写进 data 就是对所有人广播 —— 那是泄漏。
+// 隐藏信息只能从 forSeat 里产生。写进 data 就是对所有人广播 —— 那是泄漏。
 type fact struct {
 	typ     protocol.Command
 	data    any
@@ -39,6 +31,8 @@ type fact struct {
 // 就是它的规格；配套的单测直接断言**序列化后的字节**里没有别家的手牌。
 //
 // 必须是纯函数：不碰网络、不碰库、不碰并发。
+//
+// 它不填 seq：一条事件的四个收件人必须共用一个号，而这里只看得见一个座位。
 func project(seat int, f fact) protocol.Envelope {
 	payload := f.data
 	if f.forSeat != nil {

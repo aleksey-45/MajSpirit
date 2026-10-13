@@ -5,7 +5,11 @@
 // `internal/ws`（房间逻辑不碰 WebSocket，那样才能脱离网络测试）；
 // `internal/ws` 也要用同一套名字。两边共用同一个类型，就不能把它放在其中一边。
 //
-// 这里**只有信封和名字**：每种消息的 `data` 结构体定义在产生它的包里 ——
-// 会话消息（hello/authed/error/ping/pong）在 `internal/ws`，房间与对局消息在
-// `internal/room`。wire 契约本身以协议文档为准，代码里的结构体只是它的实现。
+// 这里只有信封、名字，以及给事件流发号的 Emitter（协议 §1.4 那条约束）：每种消息的
+// `data` 结构体定义在产生它的包里 —— 会话消息（hello/authed/error/ping/pong）在
+// `internal/ws`，房间与对局消息在 `internal/room`。wire 契约本身以协议文档为准，
+// 代码里的结构体只是它的实现。
+//
+// Emitter 放在这里而不是 internal/room：一个房间的**房间层与对局层**要往同一条
+// 流里发号，而这两层互相不认识（room import game，反向不行），能共用的只有叶子。
 package protocol

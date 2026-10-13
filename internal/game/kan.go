@@ -27,15 +27,23 @@ const (
 
 // doKan 处理 game.kan。
 //
-// 明杠**不走这里**：它是对别人弃牌的回应，走鸣牌窗口的 "kan" 选项。这里只处理
-// 轮到自己时能做的两种 —— 加杠与暗杠。
+// 明杠是对**别人刚打出的那张牌**的回应，走弃牌窗口（协议 §6.6 的 `discard`），
+// 不摸牌、也不是自己的回合动作 —— 那里只有"答不答这个窗口"这一件事。
+// 这里处理轮到自己时能做的两种：加杠与暗杠。
 func (g *Game) doKan(userID int64, kind string, tile mahjong.Tile) error {
 	seat := g.seatOf(userID)
 	if seat < 0 {
 		return ErrNotInGame
 	}
 	if kind == kanOpen {
-		return ErrNoClaim // 明杠只能在鸣牌窗口里宣告
+		// 手里三张 + 那张弃牌。窗口里没有这个选项就是没有资格鸣。
+		if g.claim == nil || !g.claim.has(seat, "kan") {
+			return ErrNoClaim
+		}
+		g.claim.kan[seat] = true
+		g.claim.answered[seat] = true
+		g.maybeResolveClaim()
+		return nil
 	}
 	if seat != g.turn || !g.awaitingDiscard {
 		return ErrNotYourTurn
@@ -143,6 +151,7 @@ func (g *Game) openChankanWindow(seat int, tile mahjong.Tile) {
 		answered: map[int]bool{},
 		ron:      map[int]bool{},
 		pon:      map[int]bool{},
+		kan:      map[int]bool{},
 		chi:      map[int][2]mahjong.Tile{},
 	}
 	for offset := 1; offset < 4; offset++ {

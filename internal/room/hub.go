@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/aleksey-45/majspirit/internal/protocol"
 	"github.com/aleksey-45/majspirit/internal/user"
 )
 
@@ -19,7 +20,10 @@ type hubOp func(rooms map[string]*Room)
 // 创建、查找、销毁三处都碰这张表，串行化比在三处各想一遍锁简单 ——
 // 而且"房间销毁时把它从表里摘掉"这件事天然发生在同一个 goroutine 里。
 //
-// notify 是它下面所有房间共用的投递方（就是 internal/ws 的注册表）。
+// notify 是它下面所有房间共用的投递函数（就是 internal/ws 的注册表）。
+//
+// 房间不各存一份投递方，而是各自拿它造一个 Emitter：投递是共用的，序号流不是 ——
+// 序号必须**按房间**分开（协议 §1.4）。
 type Hub struct {
 	ops     chan hubOp
 	closing chan struct{}
@@ -31,12 +35,12 @@ type Hub struct {
 	// 于是同一个 Create 有时成功有时报错 —— 那种偶发最难查。
 	closed atomic.Bool
 
-	log    *slog.Logger
-	notify Notifier
+	log  *slog.Logger
+	send protocol.Sender
 }
 
 // NewHub 起一个 Hub。log 为 nil 时用默认 logger。
-func NewHub(notify Notifier, log *slog.Logger) *Hub {
+func NewHub(send protocol.Sender, log *slog.Logger) *Hub {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -45,7 +49,7 @@ func NewHub(notify Notifier, log *slog.Logger) *Hub {
 		closing: make(chan struct{}),
 		stopped: make(chan struct{}),
 		log:     log,
-		notify:  notify,
+		send:    send,
 	}
 	go h.run()
 	return h
@@ -120,6 +124,31 @@ func (h *Hub) Len() int {
 		return 0
 	}
 	return <-reply
+}
+
+// ByUser 找这个人坐在哪个房间。
+//
+// 扫一遍房间表，而不是维护一张 userId → room 的索引：座位变化发生在房间自己的
+// goroutine 里，Hub 收不到通知，要维护索引就得让每个座位变化都回投一条指令 ——
+// 漏一处就是"把指令投进他已经离开的房间"，而这种错不报错、只表现为行为诡异。
+//
+// 扫的是每个房间的只读快照（Room.HasUser），不是房间的座位表 —— 那张表外面读不得。
+func (h *Hub) ByUser(userID int64) (*Room, bool) {
+	reply := make(chan *Room, 1)
+	if !h.post(func(rooms map[string]*Room) {
+		var found *Room
+		for _, r := range rooms {
+			if r.HasUser(userID) {
+				found = r
+				break
+			}
+		}
+		reply <- found
+	}) {
+		return nil, false
+	}
+	r := <-reply
+	return r, r != nil
 }
 
 // Close 关掉 Hub 和它下面所有房间。

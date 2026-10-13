@@ -35,6 +35,7 @@ type claim struct {
 
 	ron map[int]bool
 	pon map[int]bool
+	kan map[int]bool
 	chi map[int][2]mahjong.Tile
 }
 
@@ -51,6 +52,7 @@ func (g *Game) openClaimWindow(from int, tile mahjong.Tile) {
 		answered: map[int]bool{},
 		ron:      map[int]bool{},
 		pon:      map[int]bool{},
+		kan:      map[int]bool{},
 		chi:      map[int][2]mahjong.Tile{},
 	}
 	for offset := 1; offset < 4; offset++ {
@@ -210,24 +212,26 @@ func (g *Game) resolveClaim() {
 	}
 }
 
-// pick 按优先级挑赢家：荣和 > 碰 > 吃；同级里离放铳者近的优先。
+// pick 按优先级挑赢家：荣和 > 碰/杠 > 吃（协议 §6.6）；同级里离放铳者近的优先
+// （eligible 建窗口时就按远近排好了）。
 func (c *claim) pick() (int, string) {
-	for _, want := range []string{"ron", "pon", "chi"} {
-		for _, seat := range c.eligible {
-			switch want {
-			case "ron":
-				if c.ron[seat] {
-					return seat, "ron"
-				}
-			case "pon":
-				if c.pon[seat] {
-					return seat, "pon"
-				}
-			case "chi":
-				if _, ok := c.chi[seat]; ok {
-					return seat, "chi"
-				}
-			}
+	for _, seat := range c.eligible {
+		if c.ron[seat] {
+			return seat, "ron"
+		}
+	}
+	// 碰与杠同一档：都是"把那张牌收进自己的刻子"，规则没有先后的依据。
+	for _, seat := range c.eligible {
+		if c.kan[seat] {
+			return seat, "kan"
+		}
+		if c.pon[seat] {
+			return seat, "pon"
+		}
+	}
+	for _, seat := range c.eligible {
+		if _, ok := c.chi[seat]; ok {
+			return seat, "chi"
 		}
 	}
 	return -1, ""

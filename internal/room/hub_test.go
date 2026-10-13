@@ -12,7 +12,7 @@ import (
 
 func TestCreateMakesReadableIDs(t *testing.T) {
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 	defer h.Close()
 
 	seen := make(map[string]bool)
@@ -49,7 +49,7 @@ func TestCreateMakesReadableIDs(t *testing.T) {
 
 func TestLookupFindsAndMisses(t *testing.T) {
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 	defer h.Close()
 
 	r, err := h.Create(testUser(1, "甲"))
@@ -73,7 +73,7 @@ func TestLookupFindsAndMisses(t *testing.T) {
 // 看起来没事）。
 func TestHubConcurrentCreate(t *testing.T) {
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 
 	const workers, each = 10, 10
 
@@ -121,7 +121,7 @@ func TestHubConcurrentCreate(t *testing.T) {
 // 关 Hub 要把它下面所有房间一起关掉，否则那些 goroutine 会一直挂着。
 func TestCloseStopsRooms(t *testing.T) {
 	n := newFakeNotifier()
-	h := NewHub(n, nil)
+	h := NewHub(n.Send, nil)
 
 	r, err := h.Create(testUser(1, "甲"))
 	if err != nil {

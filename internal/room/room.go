@@ -79,10 +79,13 @@ func productionTuning() tuning {
 // 只往 commands 投指令。于是这个包里一把锁都不需要 —— 不存在忘记加锁、
 // 加锁顺序错、死锁，也不存在"一次操作做到一半被别人插进来"。
 type Room struct {
-	id     string
-	hub    *Hub
-	notify Notifier
-	log    *slog.Logger
+	id  string
+	hub *Hub
+	log *slog.Logger
+
+	// stream 是这个房间的**事件流**：房间与它开的对局共用这一个，
+	// 所以 seq 是房间级的一条线（协议 §1.4）。见 emit.go 与 protocol.Emitter。
+	stream *protocol.Emitter
 
 	commands chan command
 	closing  chan struct{} // 请求关闭（Close 或房间自己销毁）
@@ -102,6 +105,11 @@ type Room struct {
 	// 房间在 run() 里存/清它，ws 层从外面读它去投 game.* 指令。
 	games atomic.Pointer[game.Game]
 
+	// who 是"这个房间里有哪些人"的只读快照，同样给外面看（Hub.ByUser）。
+	// 座位表本身归 run() 独占，从外面读它就是竞态，所以座位一变就整份换掉 ——
+	// 换座位的地方只有 doJoin 与 doLeave 两处，都由 refreshWho 收口。
+	who atomic.Pointer[map[int64]struct{}]
+
 	// ↓↓↓ 以下字段只在 run() 的 goroutine 里读写 ↓↓↓
 
 	seats   [4]*seat
@@ -116,6 +124,19 @@ type Room struct {
 // 对局转发（转发只是多一跳，还让房间得懂对局指令）。
 func (r *Room) Game() *game.Game { return r.games.Load() }
 
+// HasUser 报告这个人在不在这个房间。任何 goroutine 都可以调（只读快照）。
+//
+// 它给 Hub.ByUser 用：网关要靠"这个人在哪个房间"来投对局指令、判断重连、
+// 拦住"同时进两个房间"。座位表本身外面读不得，所以另有一份快照。
+func (r *Room) HasUser(userID int64) bool {
+	m := r.who.Load()
+	if m == nil {
+		return false
+	}
+	_, ok := (*m)[userID]
+	return ok
+}
+
 // newRoom 建一个房间并把 owner 放进 seat 0。它**在起 goroutine 之前**就发掉了
 // room.created —— 那一刻还没有并发，谁碰都安全。
 //
@@ -124,8 +145,8 @@ func newRoom(id string, owner user.User, hub *Hub, tune tuning) *Room {
 	r := &Room{
 		id:       id,
 		hub:      hub,
-		notify:   hub.notify,
 		log:      slog.Default().With("room", id),
+		stream:   protocol.NewEmitter(hub.send),
 		commands: make(chan command),
 		closing:  make(chan struct{}),
 		stopped:  make(chan struct{}),
@@ -133,6 +154,7 @@ func newRoom(id string, owner user.User, hub *Hub, tune tuning) *Room {
 	}
 	r.seats[0] = &seat{user: owner, connected: true}
 	r.ownerID = owner.ID
+	r.refreshWho()
 	r.emitTo(0, fact{typ: protocol.EventRoomCreated, data: roomCreated{RoomID: id, Seat: 0}})
 
 	go r.run()
@@ -165,6 +187,8 @@ func (r *Room) run() {
 		case <-expired:
 			r.onDeadline()
 		case <-r.closing:
+			// 先带走对局再退出：房间没了，对局不能自己活下去（见 stopGame）。
+			r.stopGame()
 			return
 		}
 	}
@@ -224,6 +248,10 @@ func (r *Room) call(c command) error {
 	select {
 	case r.commands <- c:
 		return <-c.reply
+	case <-r.closing:
+		// 房间正在关闭。少了这一支就会互等：run 退出前要关对局（stopGame），
+		// 而对局的 goroutine 可能正卡在 postGameEnded 的这一次 call 上等回复。
+		return ErrClosed
 	case <-r.stopped:
 		return ErrClosed
 	}
@@ -269,7 +297,7 @@ func (r *Room) startGame() {
 		players[seat] = game.Player{UserID: s.user.ID, Username: s.user.Username}
 	}
 
-	g := game.New(players, r.notify, game.Options{
+	g := game.New(players, r.stream, game.Options{
 		Rounds:    r.tune.rounds,
 		TurnBase:  r.tune.turnBase,
 		TurnLimit: r.tune.turnLimit,
@@ -311,6 +339,19 @@ func (r *Room) destroyIfEmpty() {
 	r.log.Info("房间空了，销毁")
 	r.hub.remove(r.id)
 	r.shutdown()
+}
+
+// stopGame 带走手上那一场对局。
+//
+// 房间没了，对局不能自己活下去：它有自己的 goroutine 和秒表，会把牌局推完，
+// 而收件人已经回大厅甚至已经不在这个房间了。另一头是 game.endGame 里的自退 ——
+// 正常打完由对局自己收工，这里是"房间先没了"的唯一补刀点。
+//
+// 它不会和 postGameEnded 互等：call 在 closing 关上之后立刻返回 ErrClosed。
+func (r *Room) stopGame() {
+	if g := r.games.Swap(nil); g != nil {
+		g.Close()
+	}
 }
 
 // closeRoom 告诉房间里还剩下的人"这里没了"，然后销毁。
