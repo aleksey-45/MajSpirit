@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -86,6 +87,41 @@ func TestSilentClientGetsHeartbeatTimeout(t *testing.T) {
 	}
 	if got := websocket.CloseStatus(closeErr); got != statusHeartbeatTimeout {
 		t.Errorf("关闭码 = %d, 期望 %d（4408 心跳超时）；err=%v", got, statusHeartbeatTimeout, closeErr)
+	}
+}
+
+// TestClientPingGetsPong 客户端主动 ping 时必须立刻拿到 pong（协议 §4.3）。
+//
+// 这跟上面那条是**两个方向**：那条里服务端是提问方、客户端只回答 pong；
+// 这条里客户端提问。少了回 pong 这一支，客户端自己的探活永远等不到答案，
+// 只能把一条好连接判成断线。
+func TestClientPingGetsPong(t *testing.T) {
+	url := newTestServer(t, &fakeAuth{u: user.User{ID: 1, Username: "x"}}, 2*time.Second)
+	ctx, _ := baseCtx(t, 5*time.Second)
+	c := mustDial(t, ctx, url)
+
+	readEnvelope(t, ctx, c) // hello
+	writeAuth(t, ctx, c, "好票")
+	if env, _ := readEnvelope(t, ctx, c); env.Type != EventAuthed {
+		t.Fatalf("期望 authed, 实际 %q", env.Type)
+	}
+
+	if err := wsjson.Write(ctx, c, Envelope{Type: CmdPing, Data: json.RawMessage(`{}`)}); err != nil {
+		t.Fatalf("发 ping 失败: %v", err)
+	}
+
+	env, _ := readEnvelope(t, ctx, c)
+	if env.Type != EventPong {
+		t.Fatalf("期望 pong, 实际 %q", env.Type)
+	}
+
+	var p pongEvent
+	if err := json.Unmarshal(env.Data, &p); err != nil {
+		t.Fatalf("解 pong 的 data 失败: %v", err)
+	}
+	// serverTime 是客户端校准倒计时的唯一依据（协议 §2.4），缺了它 pong 就白回。
+	if p.ServerTime <= 0 {
+		t.Errorf("pong.serverTime = %d, 期望一个正的毫秒时间戳", p.ServerTime)
 	}
 }
 

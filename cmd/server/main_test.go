@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -101,6 +102,67 @@ func TestHealthzChecksDatabase(t *testing.T) {
 	}()
 
 	waitUp(t, "http://127.0.0.1:18081/healthz", done)
+}
+
+// TestDebugClientIsServedAndDoesNotShadowRoutes 走的是 run 里那套真 mux。
+//
+// 页面挂在 `/` 上，而 `/` 是所有路径的最后兜底 —— 装错的后果不是"页面 404"，
+// 是**别的路由全都静默地拿回一个 HTML 页面**。这种错在 web 包的单测里看不见
+// （那里只有一个 httptest 包着 Handler），只有起了真服务端才看得见。
+func TestDebugClientIsServedAndDoesNotShadowRoutes(t *testing.T) {
+	cfg := testConfig(t, "127.0.0.1:18082")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, cfg) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	waitUp(t, "http://127.0.0.1:18082/healthz", done)
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	resp, err := client.Get("http://127.0.0.1:18082/")
+	if err != nil {
+		t.Fatalf("取调试页失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET / = %d, 期望 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读调试页失败: %v", err)
+	}
+	for _, want := range []string{"new WebSocket(", "'/ws'"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("调试页里找不到 %q", want)
+		}
+	}
+
+	// `/ws` 必须还是 WebSocket 那条路由：不带 Upgrade 头的普通 GET
+	// 该被升级逻辑拒掉（426），而不是让调试页兜底返回一个 HTML 页面。
+	wsResp, err := client.Get("http://127.0.0.1:18082/ws")
+	if err != nil {
+		t.Fatalf("GET /ws 失败: %v", err)
+	}
+	defer wsResp.Body.Close()
+	if wsResp.StatusCode != http.StatusUpgradeRequired {
+		t.Errorf("GET /ws = %d, 期望 %d（说明它被调试页吃掉了）",
+			wsResp.StatusCode, http.StatusUpgradeRequired)
+	}
+
+	// 调试页钉在根上（`GET /{$}`），别的路径不该沾到它。
+	noResp, err := client.Get("http://127.0.0.1:18082/不存在")
+	if err != nil {
+		t.Fatalf("GET /不存在 失败: %v", err)
+	}
+	defer noResp.Body.Close()
+	if noResp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /不存在 = %d, 期望 404", noResp.StatusCode)
+	}
 }
 
 // waitUp 轮询直到服务开始响应，或者超时。

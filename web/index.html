@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MajSpirit 调试客户端</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 ui-monospace, Consolas, "Courier New", monospace;
+         background: #14161a; color: #d7dae0; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+           background: #1c1f26; border-bottom: 1px solid #2b3038; }
+  h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  #state { padding: 2px 8px; border-radius: 10px; font-size: 12px;
+           background: #3a2b2b; color: #ff9a9a; }
+  #state.on { background: #23372b; color: #86e0a0; }
+  #close { display: none; margin: 12px 16px 0; padding: 10px 12px; border-radius: 4px;
+           background: #3a2b2b; color: #ffb4b4; }
+  #close.show { display: block; }
+  #close b { font-size: 17px; }
+  main { display: grid; grid-template-columns: 350px 1fr; gap: 1px;
+         background: #2b3038; height: calc(100vh - 46px); }
+  section { background: #14161a; overflow: auto; padding: 12px 16px; }
+  label { display: block; margin: 12px 0 4px; color: #8b93a1; font-size: 12px; }
+  input, textarea, button { font: inherit; background: #1c1f26; color: #d7dae0;
+                            border: 1px solid #2b3038; border-radius: 4px; padding: 5px 8px; }
+  input, textarea { width: 100%; }
+  textarea { resize: vertical; }
+  button { cursor: pointer; }
+  button:hover { background: #262b34; }
+  button.primary { background: #2b5c8a; border-color: #3a6f9e; }
+  button.primary:hover { background: #34699b; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+  .row label { margin: 0; display: flex; align-items: center; gap: 4px; }
+  .row input[type=checkbox] { width: auto; }
+  .hint { margin-top: 6px; color: #6e7683; font-size: 12px; }
+  .hint b { color: #e6c07b; font-weight: 600; }
+  .entry { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid #1e2229;
+           font-size: 12.5px; }
+  .t { flex: none; color: #6e7683; }
+  .dir { flex: none; width: 12px; text-align: center; }
+  .up { color: #7fb3ff; }
+  .down { color: #86e0a0; }
+  .type { flex: none; width: 120px; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; color: #e6c07b; }
+  .data { white-space: pre-wrap; word-break: break-all; }
+  .sys .type, .sys .data { color: #8b93a1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MajSpirit 调试客户端</h1>
+  <span id="state">未连接</span>
+  <span class="hint">协议：docs/local/协议.md §4</span>
+</header>
+
+<div id="close"></div>
+
+<main>
+<section>
+  <label>服务端地址</label>
+  <input id="url">
+
+  <div class="row">
+    <button id="connect" class="primary">连接</button>
+    <button id="disconnect">断开全部</button>
+  </div>
+
+  <label>票（JWT）</label>
+  <textarea id="token" rows="3" placeholder="POST /api/login 返回的 token"></textarea>
+
+  <label>取票（同源请求，省一次 curl）</label>
+  <input id="username" placeholder="用户名">
+  <div class="row" style="margin-top:6px">
+    <input id="password" type="password" placeholder="密码">
+  </div>
+  <div class="row">
+    <button id="login">登录取票</button>
+    <button id="register">注册</button>
+  </div>
+
+  <label>行为</label>
+  <div class="row">
+    <label><input type="checkbox" id="autoAuth" checked> 连上自动发 auth</label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="autoPong" checked> 自动回 pong</label>
+  </div>
+  <div class="hint">取消「自动回 pong」后，最长 20 秒（15s 间隔 + 5s 等待）
+    会被服务端以 <b>4408</b> 关闭。不发 auth 则 5 秒后被 <b>4401</b> 关闭。</div>
+
+  <label>发送（信封 JSON）</label>
+  <textarea id="payload" rows="3">{"type":"ping","data":{}}</textarea>
+  <div class="row">
+    <button id="send" class="primary">发送</button>
+    <button id="bad">发非法 JSON</button>
+  </div>
+  <div class="hint">非法 JSON 会被服务端以 <b>4400</b> 关闭。</div>
+
+  <div class="row">
+    <button id="replace">再开一条连接顶号</button>
+  </div>
+  <div class="hint">同一张票再连一条，旧的那条会收到 <b>4403</b>（协议 §4.6）。</div>
+
+  <div class="row">
+    <button id="clear">清空日志</button>
+  </div>
+</section>
+
+<section id="log"></section>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = id => document.getElementById(id);
+  const logBox = $('log');
+  const conns = [];
+  let n = 0;
+
+  const CLOSE_CODES = {
+    1000: '正常关闭',
+    1001: '对端离开',
+    1006: '没有收到关闭帧（连接被直接掐断）',
+    1009: '消息过大',
+    1011: '服务端内部错误',
+    4400: '协议错误',
+    4401: '未认证 / 认证失败',
+    4403: '被服务端拒绝（在别处登录）',
+    4408: '心跳超时',
+  };
+
+  const clock = () => new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  const isOpen = h => h.ws.readyState === WebSocket.OPEN;
+
+  function add(h, dir, type, data, sys) {
+    const row = document.createElement('div');
+    row.className = 'entry' + (sys ? ' sys' : '');
+    const cells = [
+      ['t', clock()],
+      ['dir ' + dir, dir === 'up' ? '↑' : dir === 'down' ? '↓' : '·'],
+      ['type', (h ? h.tag + ' ' : '') + type],
+      ['data', data],
+    ];
+    for (const [cls, text] of cells) {
+      const el = document.createElement('span');
+      el.className = cls;
+      el.textContent = text;
+      row.append(el);
+    }
+    logBox.append(row);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  const note = msg => add(null, 'sys', 'sys', msg, true);
+
+  function setState() {
+    const alive = conns.filter(isOpen).length;
+    $('state').textContent = alive ? '已连接 × ' + alive : '未连接';
+    $('state').classList.toggle('on', alive > 0);
+  }
+
+  function showClose(h, code, reason) {
+    const known = CLOSE_CODES[code];
+    const box = $('close');
+    box.textContent = '';
+    const head = document.createElement('b');
+    head.textContent = '关闭码 ' + code + (known ? ' — ' + known : '');
+    box.append(head, document.createTextNode(
+      '　' + h.tag + '　' + (reason || '（服务端没给原因）')));
+    box.classList.add('show');
+  }
+
+  // 解析不出 type 就照原样发出去：调试页要能发坏消息，那是它的用途之一。
+  function typeOf(text) {
+    try { return JSON.parse(text).type || '(没有 type)'; } catch { return '(坏 JSON)'; }
+  }
+
+  function send(h, text) {
+    if (!isOpen(h)) { note('没有活着的连接，发不出去'); return; }
+    h.ws.send(text);
+    add(h, 'up', typeOf(text), text);
+  }
+
+  function active() {
+    for (let i = conns.length - 1; i >= 0; i--) if (isOpen(conns[i])) return conns[i];
+    return null;
+  }
+
+  function connect() {
+    const url = $('url').value.trim();
+    if (!/^wss?:\/\//.test(url)) { note('地址要以 ws:// 或 wss:// 开头'); return; }
+
+    const tag = '#' + (++n);
+    const ws = new WebSocket(url);
+    const h = { tag, ws };
+    conns.push(h);
+    note(tag + ' 连接 ' + url);
+
+    ws.onopen = () => {
+      setState();
+      note(tag + ' 已升级到 WebSocket');
+      if (!$('autoAuth').checked) return;
+      const token = $('token').value.trim();
+      if (token) send(h, JSON.stringify({ type: 'auth', data: { token } }));
+      else note(tag + ' 票是空的，跳过 auth（5 秒后会被 4401 关掉）');
+    };
+
+    ws.onmessage = ev => {
+      let env;
+      try {
+        env = JSON.parse(ev.data);
+      } catch {
+        add(h, 'down', '(坏 JSON)', ev.data);
+        return;
+      }
+      add(h, 'down', env.type, ev.data);
+      if (env.type === 'ping' && $('autoPong').checked) {
+        send(h, JSON.stringify({ type: 'pong', data: { serverTime: Date.now() } }));
+      }
+    };
+
+    ws.onclose = ev => {
+      setState();
+      note(tag + ' 关闭 code=' + ev.code + ' reason=' + (ev.reason || '（空）'));
+      showClose(h, ev.code, ev.reason);
+    };
+
+    ws.onerror = () => note(tag + ' 出错，细节看浏览器控制台与服务端日志');
+  }
+
+  async function getToken(register) {
+    const path = register ? '/api/register' : '/api/login';
+    const body = JSON.stringify({ username: $('username').value, password: $('password').value });
+    try {
+      const resp = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      const text = await resp.text();
+      if (!resp.ok) { note(path + ' → ' + resp.status + ' ' + text.trim()); return; }
+      const data = JSON.parse(text);
+      if (data.token) {
+        $('token').value = data.token;
+        note(path + ' → 200，票已填入');
+      } else {
+        note(path + ' → ' + resp.status + '（注册没返票，再点「登录取票」）');
+      }
+    } catch (err) {
+      note(path + ' 请求失败：' + err);
+    }
+  }
+
+  $('url').value = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+
+  $('connect').onclick = connect;
+  $('disconnect').onclick = () => conns.filter(isOpen).forEach(h => h.ws.close(1000, '调试页主动断开'));
+  $('send').onclick = () => { const h = active(); if (h) send(h, $('payload').value); else note('没有活着的连接'); };
+  $('bad').onclick = () => { const h = active(); if (h) send(h, '{这不是 JSON'); else note('没有活着的连接'); };
+  $('replace').onclick = connect;
+  $('clear').onclick = () => { logBox.textContent = ''; };
+  $('login').onclick = () => getToken(false);
+  $('register').onclick = () => getToken(true);
+})();
+</script>
+</body>
+</html>

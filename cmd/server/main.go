@@ -26,6 +26,7 @@ import (
 	"github.com/aleksey-45/majspirit/internal/store"
 	"github.com/aleksey-45/majspirit/internal/user"
 	"github.com/aleksey-45/majspirit/internal/ws"
+	"github.com/aleksey-45/majspirit/web"
 )
 
 // defaultTokenTTL 是登录令牌的有效期。
@@ -115,6 +116,10 @@ func run(ctx context.Context, cfg config) error {
 		}
 		_, _ = w.Write([]byte("ok\n"))
 	})
+
+	// §3.3 的调试页。`{$}` 把它钉死在根路径上：用 `GET /` 会和 `/api/`
+	// 冲突到 panic —— 后者方法更宽、路径更具体，谁都不比谁更具体（实测过）。
+	mux.Handle("GET /{$}", web.Handler())
 
 	// ④ 用户系统与 /api/*。依赖在这里组装：pool 满足 user.Repo（结构化类型），
 	// revoker 建一次、由 Logout 与 Authenticate 共用。

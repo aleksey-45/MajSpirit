@@ -351,6 +351,18 @@ func (c *Client) readLoop() {
 			}
 			continue
 		}
+		// 协议 §4.3 的另一个方向：客户端主动 ping 时服务端回 pong。
+		// 它不能落进下面那条"只记日志"的分支 —— 客户端靠它探活，
+		// 不回和连接已死对客户端是同一个现象。
+		if env.Type == CmdPing {
+			if err := c.Send(Envelope{
+				Type: EventPong,
+				Data: mustJSON(pongEvent{ServerTime: time.Now().UnixMilli()}),
+			}); err != nil {
+				return
+			}
+			continue
+		}
 		// 其余指令的分派留给后续步骤（房间层）。现在只记下来。
 		c.log.Info("收到指令", "type", string(env.Type), "data", string(data))
 	}
